@@ -1,0 +1,130 @@
+# Product Requirements Document
+
+## 1. Overview
+- **Product Name:** ACR (Advanced Call Recorder)
+- **Owner:** easterNday
+- **Last Updated:** 2026-06-14
+- **Version:** 1.1
+- **License:** GPL-3.0-only (原生引擎继承自 Andrew Gunnerson 的 BCR 项目)
+
+**问题描述：** Android 系统在原生层面不提供通话录音功能，且随着 Android 版本迭代，第三方录音方案越来越受限。ACR 为已 root 设备（Magisk/KernelSU）、自定义 ROM 用户和 Xposed/LSPosed 框架用户提供高质量、全自动的通话录音解决方案。
+
+**目标用户：**
+- 已 root 的 Android 设备用户（通过 Magisk/KernelSU 模块安装为系统 priv-app）
+- 自定义 ROM 用户（已授予特权权限）
+- Xposed/LSPosed 框架用户
+- 中国及全球需要通话录音留证的普通用户和商务用户
+
+## 2. Objectives
+- **Primary objective:** 提供无感、稳定、高质量的 Android 通话自动录音，支持多种音频格式，无需用户手动操作。
+- **Secondary objective:** 通过 Flutter 提供现代化 Material 3 UI，支持录音文件管理、规则筛选、云同步扩展能力。
+- **Out-of-scope:**
+  - 非 root 设备的免 root 录音方案（受 Android 权限限制不可行）
+  - 云端存储同步（当前版本不包含，预留 Firebase 基础设施）
+  - iOS 平台支持
+
+## 3. User Stories
+- As a **商务用户**, I want **所有通话自动录音并保存为高质量音频文件**, so that **重要的电话约定和沟通记录有据可查**。
+- As a **普通用户**, I want **按联系人或号码设置录音规则（保存/丢弃/忽略）**, so that **只保留我关心的通话录音，减少存储浪费**。
+- As a **root 用户**, I want **通过 Magisk/KernelSU 模块安装后即自动工作**, so that **不需要每次手动启动或配置复杂权限**。
+- As a **Xposed 用户**, I want **应用同时作为 LSPosed 模块加载**, so that **在支持的框架下获得更好的系统集成**。
+- As a **注重隐私的用户**, I want **录音文件存储在我指定的目录**, so that **我完全掌控录音数据的位置和访问**。
+- As a **日常使用者**, I want **在应用内手动启动录音并使用与通话录音相同的格式和设置**, so that **无论是通话录音还是手动录音，文件格式、命名规则和存储位置都统一管理**。
+- As a **归档管理者**, I want **在应用内浏览、播放和删除录音文件**, so that **不需要切换到文件管理器即可管理录音**。
+- As a **开发者**, I want **可配置的文件名模板和元数据 JSON 输出**, so that **录音文件可被外部工具自动化处理**。
+
+## 4. Functional Requirements
+
+### Core Requirements
+1. **自动通话录音** — 通过 `InCallService` 在通话开始后自动启动录音，通话结束后自动停止并保存。
+2. **多格式支持** — 支持 Opus (OGG)、AAC (M4A)、FLAC、WAV (PCM)、AMR-WB、AMR-NB 六种输出格式。
+3. **录音规则引擎** — 支持基于电话号码、通话方向（来电/去电）、SIM 卡槽的规则匹配，动作包括：保存、保存但初始暂停、丢弃、不录音。
+4. **前台服务通知** — 通话中显示常驻通知，提供暂停/恢复/保留/丢弃快捷操作。
+5. **文件管理** — 应用内浏览录音文件列表（按日期倒序），支持内联播放、删除操作。
+6. **Storage Access Framework (SAF) 输出** — 用户可选择任意目录作为录音输出位置。
+7. **自定义文件名模板** — 支持 `{date}`、`{direction}`、`{sim_slot}`、`{phone_number}`、`{contact_name}`、`{caller_name}`、`{call_log_name}` 等变量。
+8. **RMS-based 静音检测** — 基于 RMS（均方根）算法的静音检测，默认阈值 -40dBFS，静音占比 ≥ 90% 时判定为无效录音并自动丢弃，减少无效文件。
+9. **音频源选择** — 通话录音支持 VOICE_CALL（单声道混合）、VOICE_UPLINK_DOWNLINK（立体声）、VOICE_UPLINK、VOICE_DOWNLINK；手动录音使用 MIC 或 DEFAULT 音频源。
+10. **文件保留策略** — 支持按天数的自动过期删除。
+11. **元数据输出** — 每次通话生成 JSON 侧车文件，包含通话详情、格式参数和录音指标。
+12. **Logcat 调试日志** — 每次通话会话自动转储 logcat，便于问题诊断。
+13. **Material 3 UI** — 支持亮色/暗色/跟随系统主题，动态颜色。
+14. **用户认证** — Firebase Auth 集成，支持 Google 和 GitHub 登录。
+15. **第三方 VoIP 录音** — 可选择录制通过 Telecom API 的非电话应用语音通话。
+16. **统一录音管道** — 应用内手动录音与通话录音共享同一套 `AudioRecord` + `MediaCodec` 原生录音引擎。手动录音支持与通话录音相同的格式、编码参数、文件名模板、元数据输出，使用 MIC 或 DEFAULT 音频源。所有录音在同一个归档列表中呈现，通过 `isManual` 标记区分。
+
+### Edge Cases
+- 设备未解锁时（Direct Boot 模式）录音的存储和迁移
+- 编码器初始化失败时的降级处理（如特定格式不可用时回退）
+- 输出目录不可访问（SD 卡弹出、权限被撤销）时的错误恢复
+- Android Go 版本或低内存设备的缓冲区溢出保护
+- 中国产设备无 Google Play 服务时的 Firebase 优雅降级
+
+## 5. Non-Functional Requirements
+- **Performance:** 录音线程不得影响通话音频质量；编码延迟 < 100ms；应用冷启动 < 2s。
+- **Security:** 录音文件仅存储在用户指定目录；SAF URI 授权遵循最小权限原则；Firebase Auth token 安全存储。
+- **Reliability:** 来电/去电 99% 以上自动触发录音；崩溃后前台服务自动重启；编码失败不影响通话本身。
+- **Accessibility:** 通知操作按钮标签明确；Material 3 无障碍标准；支持 TalkBack 导航。
+- **Compatibility:** Android 10+ (API 29+)，目标 API 36；支持 arm64-v8a 和 armeabi-v7a。
+
+## 6. Success Metrics (参考值)
+- **录音成功率:** ≥ 99% 的通话成功触发并完成录音
+- **应用崩溃率:** < 0.1% 的会话出现崩溃
+- **静音检测准确率:** ≥ 95% 的纯静音通话被正确丢弃
+- **编码失败率:** < 0.5% 的录音出现编解码错误
+- **用户留存:** 安装后 30 天留存率 ≥ 80%
+
+## 7. Technical Notes
+- **Architecture constraints:**
+  - Flutter 层仅负责 UI 和音频播放（just_audio / ExoPlayer，原生支持 SAF content:// URI）；所有录音（通话 & 手动）均由 Android 原生引擎处理
+  - Flutter 与原生层通过 `MethodChannel("studio.unicom.acr/native")` 双向通信
+  - `RecorderInCallService` 作为前台服务运行，与主应用进程隔离
+  - `RecorderThread` 使用 `AudioRecord` + `MediaCodec` 管道进行音频捕获和编码
+- **Dependencies:**
+  - 核心 API：`io.github.libxposed:api:101.0.0`（Xposed 模块支持）
+  - 序列化：`kotlinx-serialization-json`
+  - 电话号码：`libphonenumber-android`
+  - 认证：Firebase Auth + Google Sign-In + GitHub OAuth
+  - 音频播放：`just_audio` (Flutter 端音频播放，底层 ExoPlayer，原生支持 content:// URI 播放)
+- **Integration points:**
+  - Android Telecom Framework (`InCallService`) — 通话状态监听
+  - Storage Access Framework (`DocumentFile`) — 文件输出
+  - Xposed/LSPosed Framework — 系统 API Hook
+  - Magisk/KernelSU 模块部署 — 系统 priv-app 安装
+  - `AudioRecord` + `MediaCodec` — 统一录音管道（通话录音 & 手动录音共用）
+
+## 8. Release Plan
+### Milestone 1 — 核心录音稳定版
+- **Scope:** 自动通话录音、6 种格式、录音规则引擎、前台通知、SAF 输出、静音检测
+- **Exit criteria:** 100 小时真人通话测试，录音成功率 ≥ 99%，零崩溃
+
+### Milestone 2 — Flutter UI 增强版
+- **Scope:** Material 3 UI 全部页面、统一录音管道（手动录音接入原生引擎）、文件管理、内联播放、设置同步、Firebase 认证、搜索
+- **Exit criteria:** 所有 UI 页面在 Android 10-15 设备上像素级正确，手动录音与通话录音共享同一引擎，MethodChannel 通信无超时
+
+### Milestone 3 — 发布与生态
+- **Scope:** Magisk/KernelSU 模块打包、CI/CD 自动化构建、用户文档、隐私政策
+- **Exit criteria:** 在 GitHub Releases 发布，Magisk 模块可正常刷入并工作
+
+## 9. Risks and Mitigations
+- **Risk:** Android 新版本进一步收紧通话录音权限（如 Android 16+ 限制 `CAPTURE_AUDIO_OUTPUT`）
+  - **Impact:** 高 — 核心功能可能失效
+  - **Mitigation:** 持续跟踪 Android Beta 版本变更；Xposed 模块模式作为备选方案；考虑 root 权限直接读取音频设备
+
+- **Risk:** Google Play Protect 将应用标记为恶意软件（因使用特权权限）
+  - **Impact:** 中 — 影响用户信任和安装意愿
+  - **Mitigation:** 开源透明（GPL-3.0）；不通过 Google Play 分发（仅 GitHub Releases）；完整隐私政策说明数据本地化
+
+- **Risk:** MediaCodec 在不同厂商 ROM 上的兼容性差异
+  - **Impact:** 中 — 特定设备上编码失败
+  - **Mitigation:** 录制前验证编码器可用性；支持多种格式降级回退；收集设备兼容性报告
+
+## 10. Future Considerations (v1 暂不实现)
+1. **云端备份** — v1 预留 Firebase Storage 接口，暂不实现自动备份功能。
+2. **文本转写 (ASR)** — 通话录音转文字，作为未来探索方向。
+3. **通话中实时标记/备注** — 未来考虑的功能。
+4. **VoIP 应用录音** — WhatsApp/Telegram 等 VoIP 通话录音，技术复杂度较高，延后评估。
+5. **多设备同步** — 依赖云端备份，延后。
+6. **GitHub OAuth 登录** — Firebase 已配置条件初始化，GitHub Provider 已预留但未实现完整流程，延后评估。
+7. **Flutter UI 集成测试** — 多设备适配测试、关键路径 E2E 测试，延后。
+8. **隐私合规工具** — 如通话录音加密存储、双方同意提醒等，暂不处理。

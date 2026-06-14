@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Notification channels -->
+    <string name="notification_channel_persistent_name">后台服务</string>
+    <string name="notification_channel_persistent_desc">通话录音后台常驻通知</string>
+    <string name="notification_channel_failure_name">失败提醒</string>
+    <string name="notification_channel_failure_desc">通话录音错误提醒</string>
+    <string name="notification_channel_success_name">成功提醒</string>
+    <string name="notification_channel_success_desc">通话录音成功提醒</string>
+    <string name="notification_channel_silence_name">静音警告</string>
+    <string name="notification_channel_silence_desc">通话录音全程静音警告</string>
+
+    <!-- Recording notification titles -->
+    <string name="notification_recording_initializing">通话录音初始化中</string>
+    <string name="notification_recording_in_progress">正在录制通话</string>
+    <string name="notification_recording_finalizing">通话录音完成，正在保存</string>
+    <string name="notification_recording_paused">通话录音已暂停</string>
+    <string name="notification_recording_on_hold">通话保持中</string>
+    <string name="notification_recording_failed">通话录音失败</string>
+    <string name="notification_recording_succeeded">通话录音成功</string>
+    <string name="notification_move_failed">文件移动失败</string>
+    <string name="notification_move_error">部分文件无法移动到指定目录，已保留在默认存储位置。</string>
+
+    <!-- Recording notification messages -->
+    <string name="notification_message_delete_at_end">通话结束将自动删除此录音。点击「恢复」可保留。</string>
+    <plurals name="notification_message_delete_at_end_too_short">
+        <item quantity="one">录音时长不足 %d 秒，通话结束将自动删除。点击「恢复」可保留。</item>
+        <item quantity="other">录音时长不足 %d 秒，通话结束将自动删除。点击「恢复」可保留。</item>
+    </plurals>
+    <string name="notification_internal_android_error">录音失败（%s）。此设备或固件可能不支持通话录音。</string>
+    <string name="notification_pure_silence_error">录音已丢弃，因为音频全程静音。此设备可能不支持录制 %s 应用的通话。</string>
+
+    <!-- Notification actions -->
+    <string name="notification_action_open">打开</string>
+    <string name="notification_action_share">分享</string>
+    <string name="notification_action_delete">删除</string>
+    <string name="notification_action_restore">恢复</string>
+    <string name="notification_action_pause">暂停</string>
+    <string name="notification_action_resume">继续</string>
+
+    <!-- Direct boot migration -->
+    <string name="notification_direct_boot_migration_failed">录音文件迁移失败</string>
+    <string name="notification_direct_boot_migration_error">部分解锁前录制的文件无法移动到输出目录。</string>
+
+    <!-- Format parameter display strings -->
+    <string name="format_param_compression_level">压缩级别 %s</string>
+    <string name="format_param_bitrate_kbps">%s kbps</string>
+    <string name="format_param_bitrate_bps">%s bps</string>
+
+    <!-- Format sample rate display -->
+    <string name="format_sample_rate">%s Hz</string>
+
+    <!-- Retention display strings -->
+    <string name="retention_keep_all">保留全部</string>
+    <plurals name="retention_days">
+        <item quantity="one">保留 %d 天</item>
+        <item quantity="other">保留 %d 天</item>
+    </plurals>
+
+    <!-- Audio source display strings -->
+    <string name="audio_source_voice_call">麦克风</string>
+    <string name="audio_source_voice_uplink_downlink">上行 + 下行（立体声）</string>
+    <string name="audio_source_voice_uplink">仅上行</string>
+    <string name="audio_source_voice_downlink">仅下行</string>
+    <string name="audio_source_mic">麦克风 (MIC)</string>
+    <string name="audio_source_default">默认 (DEFAULT)</string>
+    <string name="audio_source_camcorder">摄像机 (CAMCORDER)</string>
+</resources>

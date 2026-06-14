@@ -1,0 +1,88 @@
+name: Build KSU Module
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.44.2'
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Build release APK
+        run: flutter build apk --release
+
+      - name: Create KSU module structure
+        run: |
+          VERSION=$(git describe --tags --always)
+          VERSION_CODE=$(git rev-list --count HEAD)
+
+          mkdir -p ksu-module/system/priv-app/studio.unicom.acr
+          mkdir -p ksu-module/system/etc/permissions
+          mkdir -p ksu-module/META-INF/com/google/android
+
+          # APK
+          cp build/app/outputs/apk/release/app-release.apk \
+             ksu-module/system/priv-app/studio.unicom.acr/studio.unicom.acr.apk
+
+          # Permissions whitelist
+          cat > ksu-module/system/etc/permissions/privapp-permissions-studio.unicom.acr.xml << 'XML'
+          <?xml version="1.0" encoding="utf-8"?>
+          <permissions>
+              <privapp-permissions package="studio.unicom.acr">
+                  <permission name="android.permission.CAPTURE_AUDIO_OUTPUT" />
+                  <permission name="android.permission.CONTROL_INCALL_EXPERIENCE" />
+              </privapp-permissions>
+          </permissions>
+          XML
+
+          # Scripts
+          cp scripts/ksu/customize.sh ksu-module/
+          cp scripts/ksu/post-fs-data.sh ksu-module/
+          cp scripts/ksu/service.sh ksu-module/
+          cp scripts/ksu/boot_common.sh ksu-module/
+          chmod 755 ksu-module/*.sh
+
+          # module.prop
+          sed "s/{VERSION}/${VERSION}/g; s/{VERSION_CODE}/${VERSION_CODE}/g" \
+              scripts/ksu/module.prop.template > ksu-module/module.prop
+
+          # META-INF (Magisk compatibility)
+          printf '#MAGISK\n' > ksu-module/META-INF/com/google/android/updater-script
+
+      - name: Package KSU module zip
+        run: |
+          VERSION=$(git describe --tags --always)
+          cd ksu-module
+          zip -r ../ACR-KSU-${VERSION}.zip .
+          cd ..
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ACR-KSU-Module
+          path: ACR-KSU-*.zip
+
+      - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          files: ACR-KSU-*.zip
+          generateReleaseNotes: true

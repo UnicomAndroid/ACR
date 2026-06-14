@@ -1,0 +1,6 @@
+id=studio.unicom.acr
+name=ACR (Advanced Call Recorder)
+version=v{VERSION}
+versionCode={VERSION_CODE}
+author=easterNday
+description=Advanced Call Recorder - 通话自动录音
