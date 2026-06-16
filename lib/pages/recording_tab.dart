@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/recording_service.dart';
+import '../services/sherpa_service.dart';
 
 class RecordingTab extends StatefulWidget {
   final RecordingService recordingService;
@@ -33,6 +34,8 @@ class _RecordingTabState extends State<RecordingTab>
     super.dispose();
   }
 
+  bool _wasOn = false;
+
   void _onStateChanged() {
     if (!mounted) return;
     if (_rs.isRecording && !_pulseController.isAnimating) {
@@ -41,6 +44,11 @@ class _RecordingTabState extends State<RecordingTab>
       _pulseController.stop();
       _pulseController.reset();
     }
+    if (_wasOn && !_rs.isRecording && SherpaService.I.auto) {
+      final list = _rs.allRecordings;
+      if (list.isNotEmpty) SherpaService.I.onDone(list.first.path);
+    }
+    _wasOn = _rs.isRecording || _rs.isPaused;
     setState(() {});
   }
 

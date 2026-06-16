@@ -1,5 +1,9 @@
 package studio.unicom.acr
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Intent
 import android.net.Uri
 import androidx.documentfile.provider.DocumentFile
@@ -8,6 +12,10 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 import studio.unicom.acr.format.AudioSource
 import studio.unicom.acr.format.Format
 import studio.unicom.acr.output.CallMetadataJson
@@ -20,6 +28,8 @@ class MainActivity : FlutterActivity() {
     companion object {
         private const val CHANNEL = "studio.unicom.acr/native"
         private const val REQUEST_CODE_PICK_DIRECTORY = 1001
+        private const val TRANSCRIPTION_CHANNEL_ID = "transcription"
+        private const val TRANSCRIPTION_NOTIFY_ID = 9999
         private val JSON_FORMAT = Json { ignoreUnknownKeys = true }
 
         private fun inferMimeType(filename: String): String {
@@ -58,6 +68,10 @@ class MainActivity : FlutterActivity() {
                 "pauseManualRecording" -> pauseManualRecording(result)
                 "resumeManualRecording" -> resumeManualRecording(result)
                 "getManualRecordingState" -> getManualRecordingState(result)
+                "readFileBytes" -> readFileBytes(call, result)
+                "decodeAudioToPcm" -> decodeAudioToPcm(call, result)
+                "writeTranscription" -> writeTranscription(call, result)
+                "showTranscriptionNotification" -> showTranscriptionNotification(call, result)
                 else -> result.notImplemented()
             }
         }
@@ -152,32 +166,48 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun getRecordings(result: MethodChannel.Result) {
-        try {
-            val files = mutableListOf<Map<String, Any?>>()
-            val outputDir = prefs.outputDir
-            if (outputDir == null) {
-                result.success(files)
-                return
-            }
+        // 在后台线程执行 SAF 目录遍历和 JSON 读取，避免阻塞主线程导致 ANR
+        Thread {
+            try {
+                val files = mutableListOf<Map<String, Any?>>()
+                val outputDir = prefs.outputDir
 
-            val docDir = DocumentFile.fromTreeUri(this, outputDir)
-            if (docDir != null && docDir.exists()) {
-                collectRecordings(docDir.listFiles().filter { it.isFile && it.name != null }, files, false)
-            }
+                if (outputDir != null) {
+                    when (outputDir.scheme) {
+                        // content:// URI — 通过 SAF 树遍历
+                        "content" -> {
+                            val docDir = DocumentFile.fromTreeUri(this@MainActivity, outputDir)
+                            if (docDir != null && docDir.exists()) {
+                                collectRecordings(docDir.listFiles().filter { it.isFile && it.name != null }, files, false)
+                            }
+                        }
+                        // file:// URI — 直接文件系统遍历（Direct Boot 等场景）
+                        "file" -> {
+                            val dir = java.io.File(outputDir.path!!)
+                            if (dir.exists()) {
+                                collectRecordings(
+                                    (dir.listFiles() ?: emptyArray()).filter { it.isFile }.map { SafFile(it.name, it.toURI().toString(), it.length(), it.lastModified(), null) },
+                                    files, true
+                                )
+                            }
+                        }
+                    }
+                }
 
-            val defaultDir = prefs.defaultOutputDir
-            if (defaultDir.exists()) {
-                collectRecordings(
-                    (defaultDir.listFiles() ?: emptyArray()).filter { it.isFile }.map { SafFile(it.name, it.toURI().toString(), it.length(), it.lastModified(), null) },
-                    files, true
-                )
-            }
+                val defaultDir = prefs.defaultOutputDir
+                if (defaultDir.exists()) {
+                    collectRecordings(
+                        (defaultDir.listFiles() ?: emptyArray()).filter { it.isFile }.map { SafFile(it.name, it.toURI().toString(), it.length(), it.lastModified(), null) },
+                        files, true
+                    )
+                }
 
-            files.sortByDescending { it["date"] as? Long ?: 0 }
-            result.success(files)
-        } catch (e: Exception) {
-            result.error("RECORDINGS_ERROR", e.message, null)
-        }
+                files.sortByDescending { it["date"] as? Long ?: 0 }
+                runOnUiThread { result.success(files) }
+            } catch (e: Exception) {
+                runOnUiThread { result.error("RECORDINGS_ERROR", e.message, null) }
+            }
+        }.start()
     }
 
     private data class SafFile(val name: String, val uri: String, val size: Long, val date: Long, val rawMimeType: String?)
@@ -237,8 +267,81 @@ class MainActivity : FlutterActivity() {
                 "mimeType" to mimeType,
                 "isManual" to isManual,
                 "direction" to direction,
+                "transcription" to metadata?.transcription,
             ))
         }
+    }
+
+    private fun writeTranscription(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            val uriStr = call.argument<String>("uri") ?: throw IllegalArgumentException("Missing uri")
+            val text = call.argument<String>("text") ?: throw IllegalArgumentException("Missing text")
+            val audioUri = Uri.parse(uriStr)
+            // content:// URI 的 lastPathSegment 是编码文档ID而非文件名，需用 SAF 取真实文件名
+            val name = if (uriStr.startsWith("content://")) {
+                DocumentFile.fromSingleUri(this, audioUri)?.name ?: audioUri.lastPathSegment
+            } else {
+                audioUri.lastPathSegment
+            } ?: throw IllegalArgumentException("Bad uri")
+            val baseName = name.substringBeforeLast('.')
+            if (baseName.isEmpty()) { result.success(false); return }
+
+            val jsonName = "$baseName.json"
+            // Try to find JSON in same directory via SAF, then fallback to default dir
+            val jsonFile = findCompanion(uriStr, jsonName)
+            if (jsonFile == null) {
+                android.util.Log.d("ACR", "writeTranscription: 未找到 JSON 文件 name=$jsonName audioUri=$uriStr")
+                result.success(false); return
+            }
+
+            val jsonStr = if (jsonFile.startsWith("content://")) {
+                contentResolver.openInputStream(Uri.parse(jsonFile))?.use { String(it.readBytes()) }
+            } else { java.io.File(Uri.parse(jsonFile).path!!).readText() }
+            if (jsonStr == null) { result.success(false); return }
+
+            // 用正规 JSON 解析写入 transcription 字段（自动覆盖已有字段，不会重复）
+            val element = Json.parseToJsonElement(jsonStr)
+            val map = element.jsonObject.toMutableMap()
+            map["transcription"] = JsonPrimitive(text)
+            val updated = Json.encodeToString(JsonElement.serializer(), JsonObject(map))
+
+            if (jsonFile.startsWith("content://")) {
+                contentResolver.openOutputStream(Uri.parse(jsonFile))?.use { it.write(updated.toByteArray()) }
+            } else { java.io.File(Uri.parse(jsonFile).path!!).writeText(updated) }
+            result.success(true)
+        } catch (e: Exception) { result.error("WRITE_ERR", e.message, null) }
+    }
+
+    private fun findCompanion(audioUri: String, name: String): String? {
+        // content:// URIs: use SAF to locate the companion file
+        if (audioUri.startsWith("content://")) {
+            // Try 1: parentFile of the audio document
+            try {
+                val parent = DocumentFile.fromSingleUri(this, Uri.parse(audioUri))?.parentFile
+                val f = parent?.listFiles()?.find { it.name == name }
+                if (f != null) return f.uri.toString()
+            } catch (_: Exception) { }
+
+            // Try 2: via the saved tree URI (fallback)
+            try {
+                val treeUri = prefs.outputDir
+                if (treeUri != null) {
+                    val tree = DocumentFile.fromTreeUri(this, treeUri)
+                    if (tree?.exists() == true) {
+                        for (child in tree.listFiles()) {
+                            if (child.isFile && child.name == name) return child.uri.toString()
+                        }
+                    }
+                }
+            } catch (_: Exception) { }
+            return null
+        }
+
+        // file:// fallback: construct path by replacing extension
+        if (audioUri.startsWith("file://")) {
+            return audioUri.substringBeforeLast('/') + "/$name"
+        }
+        return null
     }
 
     private fun deleteRecording(call: MethodCall, result: MethodChannel.Result) {
@@ -259,6 +362,75 @@ class MainActivity : FlutterActivity() {
         } catch (e: Exception) {
             result.error("DELETE_ERROR", e.message, null)
         }
+    }
+
+    private fun readFileBytes(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            val uri = Uri.parse(call.argument<String>("uri") ?: throw IllegalArgumentException("Missing uri"))
+            val bytes = if (uri.scheme == "content") contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            else java.io.File(uri.path!!).readBytes()
+            if (bytes != null) result.success(bytes) else result.error("ERR","Cannot read",null)
+        } catch (e: Exception) { result.error("ERR",e.message,null) }
+    }
+
+    private fun decodeAudioToPcm(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            val uri = Uri.parse(call.argument<String>("uri") ?: throw IllegalArgumentException("Missing uri"))
+            Thread {
+                try {
+                    val ext = android.media.MediaExtractor()
+                    try {
+                        ext.setDataSource(this@MainActivity, uri, null)
+                        var ti = -1; var fmt: android.media.MediaFormat? = null
+                        for (i in 0 until ext.trackCount) {
+                            val f = ext.getTrackFormat(i)
+                            if (f.getString(android.media.MediaFormat.KEY_MIME)?.startsWith("audio/") == true) { ti = i; fmt = f; break }
+                        }
+                        if (ti < 0) { runOnUiThread { result.error("DECODE_ERR","No audio track",null) }; return@Thread }
+
+                        // 限制最大时长 10 分钟，防止长录音 OOM
+                        val durationUs = fmt!!.getLong(android.media.MediaFormat.KEY_DURATION)
+                        val maxUs = 10L * 60 * 1_000_000
+                        if (durationUs > maxUs) {
+                            runOnUiThread { result.error("TOO_LONG","Audio >10 min, too long to transcribe",null) }
+                            return@Thread
+                        }
+
+                        ext.selectTrack(ti)
+                        val dec = android.media.MediaCodec.createDecoderByType(fmt.getString(android.media.MediaFormat.KEY_MIME)!!)
+                        dec.configure(fmt, null, null, 0); dec.start()
+                        val bi = android.media.MediaCodec.BufferInfo()
+                        var out = FloatArray(512 * 1024)
+                        var pos = 0
+                        var eos = false
+                        while (!eos) {
+                            val inIdx = dec.dequeueInputBuffer(10000)
+                            if (inIdx >= 0) {
+                                val b = dec.getInputBuffer(inIdx)!!
+                                val sz = ext.readSampleData(b, 0)
+                                if (sz < 0) {
+                                    dec.queueInputBuffer(inIdx, 0, 0, 0, android.media.MediaCodec.BUFFER_FLAG_END_OF_STREAM)
+                                    eos = true
+                                } else {
+                                    dec.queueInputBuffer(inIdx, 0, sz, ext.sampleTime, 0)
+                                    ext.advance()
+                                }
+                            }
+                            val outIdx = dec.dequeueOutputBuffer(bi, 10000)
+                            if (outIdx >= 0) {
+                                val ob = dec.getOutputBuffer(outIdx)!!
+                                val n = bi.size / 2
+                                while (pos + n > out.size) out = out.copyOf(out.size * 2)
+                                for (i in 0 until n) out[pos++] = ob.getShort(i * 2).toInt() / 32768.0f
+                                dec.releaseOutputBuffer(outIdx, false)
+                            }
+                        }
+                        dec.stop(); dec.release(); ext.release()
+                        runOnUiThread { result.success(out.copyOf(pos)) }
+                    } catch (e: Exception) { ext.release(); runOnUiThread { result.error("DECODE_ERR",e.message,null) } }
+                } catch (e: Exception) { runOnUiThread { result.error("DECODE_ERR",e.message,null) } }
+            }.start()
+        } catch (e: Exception) { result.error("DECODE_ERR",e.message,null) }
     }
 
     @Deprecated("Use registerForActivityResult when FlutterActivity extends ComponentActivity")
@@ -352,5 +524,57 @@ class MainActivity : FlutterActivity() {
             "filename" to null,
             "duration" to 0L,
         ))
+    }
+
+    // ---- 转写通知 --------------------------------------------------------------
+
+    private fun createTranscriptionChannel() {
+        val nm = getSystemService(NotificationManager::class.java)
+        if (nm.getNotificationChannel(TRANSCRIPTION_CHANNEL_ID) != null) return
+        val channel = NotificationChannel(
+            TRANSCRIPTION_CHANNEL_ID,
+            getString(R.string.notification_channel_transcription),
+            NotificationManager.IMPORTANCE_LOW,
+        ).apply {
+            description = getString(R.string.notification_channel_transcription_desc)
+        }
+        nm.createNotificationChannel(channel)
+    }
+
+    private fun showTranscriptionNotification(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            createTranscriptionChannel()
+            val type = call.argument<String>("type") ?: "progress"
+            val title = call.argument<String>("title") ?: ""
+            val body = call.argument<String>("body") ?: ""
+
+            val intent = Intent(this, MainActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this, 0, intent, PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val builder = Notification.Builder(this, TRANSCRIPTION_CHANNEL_ID)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setSmallIcon(R.mipmap.launcher_icon)
+                .setContentIntent(pendingIntent)
+
+            when (type) {
+                "progress" -> {
+                    builder.setOngoing(true)
+                    builder.setOnlyAlertOnce(true)
+                    builder.setProgress(0, 0, true)
+                }
+                "complete" -> {
+                    builder.setAutoCancel(true)
+                }
+            }
+
+            val nm = getSystemService(NotificationManager::class.java)
+            nm.notify(TRANSCRIPTION_NOTIFY_ID, builder.build())
+            result.success(true)
+        } catch (e: Exception) {
+            result.error("NOTIFICATION_ERR", e.message, null)
+        }
     }
 }

@@ -1,11 +1,8 @@
 import 'package:flutter/material.dart';
 import '../services/settings_service.dart';
 import '../services/recording_service.dart';
-import '../utils/login_util.dart';
 import '../widgets/search_header.dart';
-import '../widgets/account_sheet.dart';
 import 'settings_tab.dart';
-import 'login_page.dart';
 import 'recording_tab.dart';
 import 'archive_tab.dart';
 
@@ -38,37 +35,10 @@ class _HomePageState extends State<HomePage> {
     final scheme = theme.colorScheme;
     final isWide = MediaQuery.of(context).size.width >= _kCompactWidth;
 
-    final currentUser = LoginUtil.currentUser();
-
-    void onAvatarTap() {
-      if (LoginUtil.currentUser() != null) {
-        showModalBottomSheet(
-          context: context,
-          backgroundColor: scheme.surface,
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          builder: (_) => AccountSheet(
-            user: LoginUtil.currentUser()!,
-            onSignOut: () {
-              LoginUtil.signOut().then((_) => setState(() {}));
-            },
-          ),
-        );
-      } else {
-        Navigator.of(context)
-            .push(MaterialPageRoute(builder: (_) => const LoginPage()))
-            .then((_) => setState(() {}));
-      }
-    }
-
     final body = SafeArea(
       child: Column(
         children: [
-          SearchHeader(
-            avatarUrl: currentUser?.photoURL,
-            onAvatarTap: onAvatarTap,
-          ),
+          const SearchHeader(),
           Expanded(
             child: IndexedStack(
               index: _currentTab.index,

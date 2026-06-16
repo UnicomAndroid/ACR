@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -138,6 +139,19 @@ class NativeBridge {
     }
   }
 
+  Future<Uint8List?> readFileBytes(String uri) async {
+    try { final r = await _channel.invokeMethod('readFileBytes', {'uri': uri}); return r is Uint8List ? r : null; }
+    catch (e) { debugPrint('readFileBytes: $e'); return null; }
+  }
+  Future<Float32List?> decodeAudioToPcm(String uri) async {
+    try { final r = await _channel.invokeMethod('decodeAudioToPcm', {'uri': uri}); return r is Float32List ? r : null; }
+    catch (e) { debugPrint('decodeAudioToPcm: $e'); return null; }
+  }
+  Future<bool> writeTranscription(String uri, String text) async {
+    try { return await _channel.invokeMethod('writeTranscription', {'uri': uri, 'text': text}) == true; }
+    catch (e) { debugPrint('writeTranscription: $e'); return false; }
+  }
+
   // ---- SAF 目录选择器 -----------------------------------------------------
 
   /// 启动系统 SAF 目录选择器，让用户选择录音存储目录。
@@ -199,6 +213,28 @@ class NativeBridge {
       if (r is Map) return Map<String, dynamic>.from(r);
       return {'state': 'IDLE', 'duration': 0};
     } catch (e) { debugPrint('getManualRecordingState: $e'); return {'state': 'IDLE', 'duration': 0}; }
+  }
+
+  /// 显示/更新转写通知
+  ///
+  /// [type] 为 "progress" 时显示进行中通知（持续，不可滑动清除），
+  /// 为 "complete" 时替换为完成通知（可滑动清除）。
+  Future<bool> showTranscriptionNotification({
+    required String type,
+    required String title,
+    required String body,
+  }) async {
+    try {
+      final r = await _channel.invokeMethod('showTranscriptionNotification', {
+        'type': type,
+        'title': title,
+        'body': body,
+      });
+      return r == true;
+    } catch (e) {
+      debugPrint('showTranscriptionNotification: $e');
+      return false;
+    }
   }
 
   Future<Map<String, dynamic>> getRecordingState() async {

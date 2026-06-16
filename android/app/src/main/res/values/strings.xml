@@ -9,6 +9,8 @@
     <string name="notification_channel_success_desc">通话录音成功提醒</string>
     <string name="notification_channel_silence_name">静音警告</string>
     <string name="notification_channel_silence_desc">通话录音全程静音警告</string>
+    <string name="notification_channel_transcription">语音转写</string>
+    <string name="notification_channel_transcription_desc">离线语音转写进度和结果通知</string>
 
     <!-- Recording notification titles -->
     <string name="notification_recording_initializing">通话录音初始化中</string>

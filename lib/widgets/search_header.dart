@@ -1,10 +1,8 @@
 import 'package:flutter/material.dart';
 
-/// 顶部搜索栏，包含搜索输入框和头像按钮。
+/// 顶部搜索栏（占位，后续可扩展搜索功能）
 class SearchHeader extends StatelessWidget {
-  final String? avatarUrl;
-  final VoidCallback? onAvatarTap;
-  const SearchHeader({super.key, this.avatarUrl, this.onAvatarTap});
+  const SearchHeader({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -26,26 +24,6 @@ class SearchHeader extends StatelessWidget {
               Icons.search,
               size: 20,
               color: scheme.onSurfaceVariant,
-            ),
-            suffixIcon: GestureDetector(
-              onTap: onAvatarTap,
-              child: Padding(
-                padding: const EdgeInsets.all(6),
-                child: CircleAvatar(
-                  radius: 14,
-                  backgroundColor: scheme.primaryContainer,
-                  backgroundImage: (avatarUrl != null && avatarUrl!.isNotEmpty)
-                      ? NetworkImage(avatarUrl!)
-                      : null,
-                  child: (avatarUrl == null || avatarUrl!.isEmpty)
-                      ? Icon(
-                          Icons.person,
-                          size: 16,
-                          color: scheme.onPrimaryContainer,
-                        )
-                      : null,
-                ),
-              ),
             ),
             filled: true,
             fillColor: scheme.surfaceContainerHigh,

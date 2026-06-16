@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 import 'native_bridge.dart';
+import 'sherpa_service.dart';
 
 enum RecordingState { idle, recording, paused }
 enum PlaybackState { stopped, playing, paused }
@@ -158,6 +159,16 @@ class RecordingService extends ChangeNotifier {
         isManual: m['isManual'] as bool? ?? false,
         direction: m['direction'] as String?,
       )).toList();
+
+      // 从 JSON 元数据加载已有的转写结果
+      for (final m in list) {
+        final uri = m['uri'] as String;
+        final transcription = m['transcription'] as String?;
+        if (transcription != null && transcription.isNotEmpty) {
+          SherpaService.I.loadResult(uri, transcription);
+        }
+      }
+
       notifyListeners();
     } catch (e) { debugPrint('refreshNativeRecordings: $e'); }
   }

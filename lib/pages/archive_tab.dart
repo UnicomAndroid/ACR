@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/recording_service.dart';
+import '../services/sherpa_service.dart';
+import '../widgets/app_dialog.dart';
 
 // ---- 归档标签页 ----------------------------------------------------------------
 
@@ -52,7 +54,7 @@ class _ArchiveTabState extends State<ArchiveTab> {
                   padding: EdgeInsets.fromLTRB(16, 8, 16, _rs.playingPath != null ? 150 : 16),
                   itemCount: recordings.length,
                   itemBuilder: (context, index) {
-                    return RecordingListItem(info: recordings[index], service: _rs);
+                    return RecordingListItem(key: ValueKey(recordings[index].path), info: recordings[index], service: _rs);
                   },
                 ),
                 if (_rs.playingPath != null)
@@ -117,11 +119,37 @@ class _ArchiveTabState extends State<ArchiveTab> {
 
 // ---- 文件列表项 ----------------------------------------------------------------
 
-class RecordingListItem extends StatelessWidget {
+class RecordingListItem extends StatefulWidget {
   final RecordingInfo info;
   final RecordingService service;
 
   const RecordingListItem({super.key, required this.info, required this.service});
+
+  @override
+  State<RecordingListItem> createState() => _RecordingListItemState();
+}
+
+class _RecordingListItemState extends State<RecordingListItem> {
+  bool _transcriptExpanded = false;
+
+  RecordingInfo get info => widget.info;
+  RecordingService get service => widget.service;
+
+  @override
+  void initState() {
+    super.initState();
+    SherpaService.I.addListener(_onSherpaChanged);
+  }
+
+  @override
+  void dispose() {
+    SherpaService.I.removeListener(_onSherpaChanged);
+    super.dispose();
+  }
+
+  void _onSherpaChanged() {
+    if (mounted) setState(() {});
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -141,123 +169,174 @@ class RecordingListItem extends StatelessWidget {
             ? BorderSide(color: scheme.primary.withAlpha(80), width: 1)
             : BorderSide.none,
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(12),
-        onTap: () => service.togglePlayPause(info.path),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-          child: Row(
-            children: [
-              // 播放按钮
-              Container(
-                width: 44,
-                height: 44,
-                decoration: BoxDecoration(
-                  color: isActive
-                      ? scheme.primaryContainer
-                      : scheme.surfaceContainerHighest,
-                  shape: BoxShape.circle,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // 文件信息
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  info.filename,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontWeight: FontWeight.w500,
+                    color: scheme.onSurface,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
-                child: Icon(
-                  isThisPlaying ? Icons.pause : Icons.play_arrow,
-                  color: isActive ? scheme.primary : scheme.onSurfaceVariant,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 14),
-              // 文件信息
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                const SizedBox(height: 4),
+                Row(
                   children: [
-                    Text(
-                      info.filename,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontWeight: FontWeight.w500,
-                        color: scheme.onSurface,
+                    Icon(Icons.calendar_today, size: 12, color: scheme.onSurfaceVariant),
+                    const SizedBox(width: 4),
+                    Text(info.formattedDate, style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant)),
+                    const SizedBox(width: 12),
+                    Icon(Icons.storage, size: 12, color: scheme.onSurfaceVariant),
+                    const SizedBox(width: 4),
+                    Text(info.formattedSize, style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant)),
+                    if (info.direction != null) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: _directionColor(info.direction!, scheme).withAlpha(30),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          _directionLabel(info.direction!),
+                          style: theme.textTheme.labelSmall?.copyWith(color: _directionColor(info.direction!, scheme), fontSize: 10),
+                        ),
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.calendar_today,
-                          size: 12,
-                          color: scheme.onSurfaceVariant,
+                    ],
+                    if (info.isManual) ...[
+                      const SizedBox(width: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: scheme.secondaryContainer.withAlpha(120),
+                          borderRadius: BorderRadius.circular(4),
                         ),
-                        const SizedBox(width: 4),
-                        Text(
-                          info.formattedDate,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
+                        child: Text(
+                          '手动录音',
+                          style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSecondaryContainer, fontSize: 10),
                         ),
-                        const SizedBox(width: 12),
-                        Icon(
-                          Icons.storage,
-                          size: 12,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 4),
-                        Text(
-                          info.formattedSize,
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                        if (info.direction != null) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: _directionColor(info.direction!, scheme).withAlpha(30),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              _directionLabel(info.direction!),
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: _directionColor(info.direction!, scheme),
-                                fontSize: 10,
-                              ),
-                            ),
-                          ),
-                        ],
-                        if (info.isManual) ...[
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                            decoration: BoxDecoration(
-                              color: scheme.secondaryContainer.withAlpha(120),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Text(
-                              '手动录音',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: scheme.onSecondaryContainer,
-                                fontSize: 10,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+                      ),
+                    ],
                   ],
                 ),
-              ),
-              // 删除按钮
-              IconButton(
-                icon: Icon(
-                  Icons.delete_outline,
-                  size: 20,
-                  color: scheme.error.withAlpha(180),
-                ),
-                onPressed: () => _confirmDelete(context),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+
+          // 转写内容（可折叠）
+          Builder(builder: (_) {
+            final tx = SherpaService.I.text(info.path);
+            if (tx == null || tx.isEmpty || tx == '...') return const SizedBox.shrink();
+            return Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Divider(height: 1),
+                InkWell(
+                  onTap: () => setState(() => _transcriptExpanded = !_transcriptExpanded),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                    child: Row(
+                      children: [
+                        Icon(Icons.description_outlined, size: 16, color: scheme.primary.withAlpha(180)),
+                        const SizedBox(width: 8),
+                        Text('转写内容', style: theme.textTheme.labelMedium?.copyWith(color: scheme.primary)),
+                        const Spacer(),
+                        Icon(_transcriptExpanded ? Icons.expand_less : Icons.expand_more, size: 18, color: scheme.onSurfaceVariant),
+                      ],
+                    ),
+                  ),
+                ),
+                if (_transcriptExpanded)
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: Text(tx, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, height: 1.5)),
+                  ),
+              ],
+            );
+          }),
+
+          // 底部操作栏
+          const Divider(height: 1),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                // 播放按钮
+                IconButton(
+                  icon: Icon(
+                    isThisPlaying ? Icons.pause_circle_outlined : Icons.play_circle_outlined,
+                    size: 26,
+                    color: isActive ? scheme.primary : scheme.onSurfaceVariant,
+                  ),
+                  onPressed: () => service.togglePlayPause(info.path),
+                  tooltip: isThisPlaying ? '暂停' : '播放',
+                ),
+                // 转写按钮
+                ListenableBuilder(
+                  listenable: SherpaService.I,
+                  builder: (_, __) {
+                    final tx = SherpaService.I.text(info.path);
+                    if (tx == '...') return const SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 2));
+                    final ok = SherpaService.I.ready;
+                    return IconButton(
+                      icon: Icon(
+                        tx != null ? Icons.check_circle : ok ? Icons.text_snippet : Icons.text_snippet_outlined,
+                        size: 22,
+                        color: tx != null ? Colors.green : ok ? scheme.primary : scheme.onSurfaceVariant.withAlpha(80),
+                      ),
+                      onPressed: () => _onTranscribeTap(context, tx != null, ok),
+                      tooltip: tx != null ? '重新转写' : ok ? '转写' : '请先下载模型',
+                    );
+                  },
+                ),
+                // 删除按钮
+                IconButton(
+                  icon: Icon(Icons.delete_outline, size: 22, color: scheme.error.withAlpha(180)),
+                  onPressed: () => _confirmDelete(context),
+                  tooltip: '删除',
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _onTranscribeTap(BuildContext context, bool hasResult, bool ready) {
+    if (!ready) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('请先在设置中下载语音识别模型'), duration: Duration(seconds: 2)));
+      return;
+    }
+    if (hasResult) {
+      _confirmOverwrite(context);
+    } else {
+      SherpaService.I.run(info.path);
+    }
+  }
+
+  void _confirmOverwrite(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: const Text('覆盖转写'),
+        content: Text('"${info.filename}" 已有转写结果，是否重新转写？'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () { Navigator.pop(ctx); SherpaService.I.run(info.path); },
+            child: Text('覆盖', style: TextStyle(color: Theme.of(ctx).colorScheme.primary)),
+          ),
+        ],
       ),
     );
   }
@@ -265,23 +344,14 @@ class RecordingListItem extends StatelessWidget {
   void _confirmDelete(BuildContext context) {
     showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AppDialog(
         title: const Text('Delete Recording'),
         content: Text('Delete "${info.filename}"?'),
         actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
           TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              service.deleteRecording(info.path);
-              Navigator.pop(ctx);
-            },
-            child: Text(
-              'Delete',
-              style: TextStyle(color: Theme.of(ctx).colorScheme.error),
-            ),
+            onPressed: () { service.deleteRecording(info.path); Navigator.pop(ctx); },
+            child: Text('Delete', style: TextStyle(color: Theme.of(ctx).colorScheme.error)),
           ),
         ],
       ),

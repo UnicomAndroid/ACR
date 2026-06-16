@@ -4,6 +4,9 @@ import 'package:package_info_plus/package_info_plus.dart';
 import '../services/settings_service.dart';
 import '../services/recording_service.dart';
 import '../services/native_bridge.dart';
+import '../widgets/app_dialog.dart';
+import '../services/model_manager.dart';
+import '../services/sherpa_service.dart';
 
 /// =============================================================================
 /// SettingsTab — 完整的应用设置页
@@ -162,6 +165,10 @@ class SettingsTab extends StatelessWidget {
           ),
         ),
 
+        // 语音转写(离线)
+        _SectionHeader(title: '语音转写'),
+        _SettingsCard(child: _TranscriptionSettings()),
+
         // =====================================================================
         // 关于
         // =====================================================================
@@ -299,7 +306,7 @@ class _ListTileWithDialog extends StatelessWidget {
     final controller = TextEditingController(text: initialValue);
     final result = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
+      builder: (ctx) => AppDialog(
         title: Text(dialogTitle),
         content: TextField(
           controller: controller,
@@ -308,14 +315,8 @@ class _ListTileWithDialog extends StatelessWidget {
           autofocus: true,
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('保存'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, controller.text), child: const Text('保存')),
         ],
       ),
     );
@@ -793,4 +794,122 @@ class _AppVersionTile extends StatelessWidget {
       },
     );
   }
+}
+
+// ---- 离线转写设置 ----------------------------------------------------------
+
+class _TranscriptionSettings extends StatefulWidget {
+  @override State<_TranscriptionSettings> createState() => _TranscriptionSettingsState();
+}
+
+class _TranscriptionSettingsState extends State<_TranscriptionSettings> {
+  final _mm = ModelManager.I; final _ss = SherpaService.I;
+
+  @override void initState() { super.initState(); _mm.addListener(_onChanged); _ss.addListener(_onChanged); }
+  @override void dispose() { _mm.removeListener(_onChanged); _ss.removeListener(_onChanged); super.dispose(); }
+  void _onChanged() { if (mounted) setState(() {}); }
+
+  static const _intervalOptions = [15, 30, 60, 120, 300];
+  static const _intervalLabels = {
+    15: '15 秒',
+    30: '30 秒',
+    60: '1 分钟',
+    120: '2 分钟',
+    300: '5 分钟',
+  };
+
+  void _showIntervalPicker(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: scheme.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) {
+        final s = Theme.of(ctx).colorScheme;
+        final t = Theme.of(ctx);
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(width: 36, height: 4,
+                    margin: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(color: s.onSurfaceVariant.withAlpha(60), borderRadius: BorderRadius.circular(2)),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 4, 24, 12),
+                  child: Text('轮询间隔', style: t.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600)),
+                ),
+                ..._intervalOptions.map((v) {
+                  final selected = v == _ss.pollInterval;
+                  return ListTile(
+                    leading: Icon(
+                      selected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
+                      color: selected ? s.primary : s.onSurfaceVariant,
+                    ),
+                    title: Text(_intervalLabels[v] ?? '$v 秒',
+                      style: TextStyle(color: selected ? s.primary : s.onSurface, fontWeight: selected ? FontWeight.w600 : FontWeight.normal),
+                    ),
+                    onTap: () { _ss.setPollInterval(v); Navigator.pop(ctx); },
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  @override Widget build(BuildContext c) {
+    final t = Theme.of(c), s = t.colorScheme;
+    return Column(children: [
+      ListTile(
+        leading: Icon(_icon, color: _color),
+        title: Text('SenseVoice 模型', style: t.textTheme.bodyMedium),
+        subtitle: Text(_status, style: t.textTheme.labelSmall?.copyWith(color: s.onSurfaceVariant)),
+        trailing: _mm.status == ModelStatus.downloading
+          ? SizedBox(width:24,height:24,child:CircularProgressIndicator(value:_mm.progress>0?_mm.progress:null,strokeWidth:2,color:s.primary))
+          : _mm.status == ModelStatus.ready ? Icon(Icons.check_circle,color:Colors.green,size:22)
+          : FilledButton.tonal(onPressed:()=>_mm.download(), child:const Text('下载')),
+      ),
+      if (_mm.status == ModelStatus.downloading)
+        Padding(padding:const EdgeInsets.fromLTRB(56,0,16,8), child:ClipRRect(borderRadius:BorderRadius.circular(4), child:LinearProgressIndicator(value:_mm.progress>0?_mm.progress:null,minHeight:4))),
+      if (_mm.status == ModelStatus.error)
+        Padding(padding:const EdgeInsets.fromLTRB(56,0,16,8), child:Text(_mm.error, style:t.textTheme.labelSmall?.copyWith(color:s.error))),
+      const Divider(height:1,indent:56),
+      SwitchListTile(secondary:Icon(Icons.auto_awesome,color:s.primary), title:Text('录音后自动转写', style:t.textTheme.bodyMedium), subtitle:Text('使用本地模型，无需网络', style:t.textTheme.labelSmall?.copyWith(color:s.onSurfaceVariant)), value:_ss.auto, onChanged:(v)=>_ss.setAuto(v)),
+      if (_ss.auto) ...[
+        const Divider(height:1,indent:56),
+        ListTile(
+          leading: Icon(Icons.timer_outlined, color: s.primary),
+          title: Text('轮询间隔', style: t.textTheme.bodyMedium),
+          subtitle: Text(_intervalLabels[_ss.pollInterval] ?? '${_ss.pollInterval} 秒', style: t.textTheme.labelSmall?.copyWith(color: s.onSurfaceVariant)),
+          trailing: const Icon(Icons.chevron_right, size: 20),
+          onTap: () => _showIntervalPicker(context),
+        ),
+      ],
+    ]);
+  }
+
+  IconData get _icon => switch (_mm.status) {
+    ModelStatus.ready => Icons.check_circle, ModelStatus.downloading => Icons.downloading,
+    ModelStatus.error => Icons.error, _ => Icons.download,
+  };
+  Color get _color => switch (_mm.status) {
+    ModelStatus.ready => Colors.green, ModelStatus.downloading => Theme.of(context).colorScheme.primary,
+    ModelStatus.error => Theme.of(context).colorScheme.error, _ => Theme.of(context).colorScheme.primary,
+  };
+  String get _status => switch (_mm.status) {
+    ModelStatus.ready => '模型已就绪',
+    ModelStatus.downloading => _mm.progress>0?'下载中 ${(_mm.progress*100).toStringAsFixed(0)}%':'准备下载...',
+    ModelStatus.error => '下载失败',
+    _ => '轻点下载 (~90MB)',
+  };
 }
