@@ -80,6 +80,7 @@ data class CallMetadataJson(
     val calls: List<CallPartyDetailsJson>,
     val output: OutputJson,
     val transcription: String? = null,
+    val summary: String? = null,
 ) {
     constructor(context: Context, metadata: CallMetadata, output: OutputJson) : this(
         timestampUnixMs = metadata.timestamp.toInstant().toEpochMilli(),

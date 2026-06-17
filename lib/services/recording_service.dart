@@ -220,15 +220,29 @@ class RecordingService extends ChangeNotifier {
   // ---- Playback (just_audio with ExoPlayer — supports content:// URIs) ----
   Future<void> playFile(String path) async {
     if (_playingPath == path) {
-      if (_playbackState == PlaybackState.playing) { await _player.pause(); _playbackState = PlaybackState.paused; notifyListeners(); return; }
-      if (_playbackState == PlaybackState.paused) { await _player.play(); _playbackState = PlaybackState.playing; notifyListeners(); return; }
+      if (_playbackState == PlaybackState.playing) {
+        await _player.pause(); _playbackState = PlaybackState.paused; notifyListeners(); return;
+      }
+      if (_playbackState == PlaybackState.paused) {
+        await _player.play(); _playbackState = PlaybackState.playing; notifyListeners(); return;
+      }
     }
     await _player.stop();
     _playingPath = path;
-    await _player.setAudioSource(AudioSource.uri(Uri.parse(path)));
-    await _player.play();
     _playbackState = PlaybackState.playing;
+    _playbackDuration = Duration.zero;
     notifyListeners();
+    try {
+      await _player.setAudioSource(AudioSource.uri(Uri.parse(path)));
+      await _player.play();
+    } catch (e) {
+      debugPrint('playFile 失败: $e');
+      _playingPath = null;
+      _playbackState = PlaybackState.stopped;
+      _playbackDuration = Duration.zero;
+      _playbackPosition = Duration.zero;
+      notifyListeners();
+    }
   }
 
   Future<void> stopPlayback() async { await _player.stop(); _playingPath = null; _playbackState = PlaybackState.stopped; _playbackPosition = Duration.zero; notifyListeners(); }
@@ -244,7 +258,16 @@ class RecordingService extends ChangeNotifier {
       if (path.startsWith('content://')) {
         await NativeBridge.instance.deleteRecording(path);
       } else {
+        // file:// URI — 删除音频 + 伴生文件 (.json / .log / .logcat)
         final f = File(path);
+        final filename = f.uri.pathSegments.last;
+        final dot = filename.lastIndexOf('.');
+        final baseName = dot > 0 ? filename.substring(0, dot) : filename;
+        final parentDir = f.parent;
+        for (final ext in ['.json', '.log', '.logcat']) {
+          final companion = File('${parentDir.path}/$baseName$ext');
+          if (await companion.exists()) await companion.delete();
+        }
         if (f.existsSync()) await f.delete();
       }
       await refreshRecordings();

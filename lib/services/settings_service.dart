@@ -26,12 +26,22 @@ import 'native_bridge.dart';
 class SettingsService extends ChangeNotifier {
   // ---- Flutter 专属键 --------------------------------------------------------
   static const _kThemeMode = 'theme_mode';
+  static const _kEnableSummarization = 'enable_summarization';
+  static const _kApiKey = 'api_key';
+  static const _kApiBaseUrl = 'api_base_url';
+  static const _kSummarizeModel = 'summarize_model';
 
   // ---- 实例字段 ---------------------------------------------------------------
   late final SharedPreferences _prefs;
 
-  // Flutter 专属
+  // Flutter 专属 — 主题
   ThemeMode _themeMode = ThemeMode.system;
+
+  // Flutter 专属 — AI 总结
+  bool _enableSummarization = false;
+  String _apiKey = '';
+  String _apiBaseUrl = 'https://api.openai.com/v1';
+  String _summarizeModel = 'gpt-4o-mini';
 
   // 基本设置（共享）
   String _formatName = 'opus';
@@ -75,6 +85,12 @@ class SettingsService extends ChangeNotifier {
     if (stored != null && stored >= 0 && stored < ThemeMode.values.length) {
       service._themeMode = ThemeMode.values[stored];
     }
+
+    // AI 总结
+    service._enableSummarization = service._prefs.getBool(_kEnableSummarization) ?? false;
+    service._apiKey = service._prefs.getString(_kApiKey) ?? '';
+    service._apiBaseUrl = service._prefs.getString(_kApiBaseUrl) ?? 'https://api.openai.com/v1';
+    service._summarizeModel = service._prefs.getString(_kSummarizeModel) ?? 'gpt-4o-mini';
 
     // ---- 从原生层拉取共享设置 ----
     // 此操作仅在实际存在原生层时有效（Android 平台）。
@@ -125,6 +141,46 @@ class SettingsService extends ChangeNotifier {
     if (_themeMode == value) return;
     _themeMode = value;
     _prefs.setInt(_kThemeMode, value.index);
+    notifyListeners();
+  }
+
+  // ===========================================================================
+  // AI 总结
+  // ===========================================================================
+
+  bool get enableSummarization => _enableSummarization;
+
+  set enableSummarization(bool value) {
+    if (_enableSummarization == value) return;
+    _enableSummarization = value;
+    _prefs.setBool(_kEnableSummarization, value);
+    notifyListeners();
+  }
+
+  String get apiKey => _apiKey;
+
+  set apiKey(String value) {
+    if (_apiKey == value) return;
+    _apiKey = value;
+    _prefs.setString(_kApiKey, value);
+    notifyListeners();
+  }
+
+  String get apiBaseUrl => _apiBaseUrl;
+
+  set apiBaseUrl(String value) {
+    if (_apiBaseUrl == value) return;
+    _apiBaseUrl = value;
+    _prefs.setString(_kApiBaseUrl, value);
+    notifyListeners();
+  }
+
+  String get summarizeModel => _summarizeModel;
+
+  set summarizeModel(String value) {
+    if (_summarizeModel == value) return;
+    _summarizeModel = value;
+    _prefs.setString(_kSummarizeModel, value);
     notifyListeners();
   }
 

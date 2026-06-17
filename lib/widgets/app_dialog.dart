@@ -25,9 +25,8 @@ class AppDialog extends StatelessWidget {
 
     return Dialog(
       insetPadding: EdgeInsets.zero,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(28)),
       elevation: 3,
-      surfaceTintColor: Colors.transparent,
       child: SizedBox(
         width: w,
         child: Column(

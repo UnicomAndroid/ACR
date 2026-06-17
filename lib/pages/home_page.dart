@@ -44,7 +44,7 @@ class _HomePageState extends State<HomePage> {
               index: _currentTab.index,
               children: [
                 RecordingTab(recordingService: widget.recordingService),
-                ArchiveTab(recordingService: widget.recordingService),
+                ArchiveTab(recordingService: widget.recordingService, settingsService: widget.settingsService),
                 SettingsTab(
                   settingsService: widget.settingsService,
                   recordingService: widget.recordingService,
@@ -61,42 +61,31 @@ class _HomePageState extends State<HomePage> {
       return Scaffold(
         body: Row(
           children: [
-            Container(
-              decoration: BoxDecoration(
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withAlpha(25),
-                    blurRadius: 6,
-                    offset: const Offset(2, 0),
-                  ),
-                ],
-              ),
-              child: NavigationRail(
-                selectedIndex: _currentTab.index,
-                onDestinationSelected: (i) =>
-                    setState(() => _currentTab = AppTab.values[i]),
-                backgroundColor: scheme.surface,
-                groupAlignment: 0.0,
-                indicatorColor: scheme.secondaryContainer,
-                labelType: NavigationRailLabelType.all,
-                destinations: const [
-                  NavigationRailDestination(
-                    icon: Icon(Icons.keyboard_voice_outlined),
-                    selectedIcon: Icon(Icons.keyboard_voice),
-                    label: Text('录音'),
-                  ),
-                  NavigationRailDestination(
-                    icon: Icon(Icons.archive_outlined),
-                    selectedIcon: Icon(Icons.archive),
-                    label: Text('归档'),
-                  ),
-                  NavigationRailDestination(
-                    icon: Icon(Icons.settings_outlined),
-                    selectedIcon: Icon(Icons.settings),
-                    label: Text('设置'),
-                  ),
-                ],
-              ),
+            NavigationRail(
+              selectedIndex: _currentTab.index,
+              onDestinationSelected: (i) =>
+                  setState(() => _currentTab = AppTab.values[i]),
+              backgroundColor: scheme.surfaceContainerLow,
+              groupAlignment: 0.0,
+              indicatorColor: scheme.secondaryContainer,
+              labelType: NavigationRailLabelType.all,
+              destinations: const [
+                NavigationRailDestination(
+                  icon: Icon(Icons.keyboard_voice_outlined),
+                  selectedIcon: Icon(Icons.keyboard_voice),
+                  label: Text('录音'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.archive_outlined),
+                  selectedIcon: Icon(Icons.archive),
+                  label: Text('归档'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.settings_outlined),
+                  selectedIcon: Icon(Icons.settings),
+                  label: Text('设置'),
+                ),
+              ],
             ),
             Expanded(child: body),
           ],
@@ -111,10 +100,8 @@ class _HomePageState extends State<HomePage> {
         selectedIndex: _currentTab.index,
         onDestinationSelected: (i) =>
             setState(() => _currentTab = AppTab.values[i]),
-        backgroundColor: scheme.surface,
-        elevation: 3,
-        surfaceTintColor: Colors.transparent,
-        shadowColor: Colors.black26,
+        backgroundColor: scheme.surfaceContainerLow,
+        elevation: 2,
         indicatorColor: scheme.secondaryContainer,
         destinations: const [
           NavigationDestination(

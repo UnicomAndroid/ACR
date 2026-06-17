@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/recording_service.dart';
+import '../services/settings_service.dart';
 import '../services/sherpa_service.dart';
 import '../widgets/app_dialog.dart';
 
@@ -7,7 +8,8 @@ import '../widgets/app_dialog.dart';
 
 class ArchiveTab extends StatefulWidget {
   final RecordingService recordingService;
-  const ArchiveTab({super.key, required this.recordingService});
+  final SettingsService settingsService;
+  const ArchiveTab({super.key, required this.recordingService, required this.settingsService});
 
   @override
   State<ArchiveTab> createState() => _ArchiveTabState();
@@ -20,6 +22,7 @@ class _ArchiveTabState extends State<ArchiveTab> {
   void initState() {
     super.initState();
     _rs.addListener(_onServiceChanged);
+    SherpaService.I.refreshSummaries();
     _refresh();
   }
 
@@ -61,8 +64,7 @@ class _ArchiveTabState extends State<ArchiveTab> {
                   Positioned(
                     left: 16, right: 16, bottom: 8,
                     child: Material(
-                      elevation: 6,
-                      shadowColor: Colors.black26,
+                      elevation: 3,
                       borderRadius: BorderRadius.circular(16),
                       child: MiniPlayer(service: _rs),
                     ),
@@ -131,6 +133,7 @@ class RecordingListItem extends StatefulWidget {
 
 class _RecordingListItemState extends State<RecordingListItem> {
   bool _transcriptExpanded = false;
+  bool _summaryExpanded = false;
 
   RecordingInfo get info => widget.info;
   RecordingService get service => widget.service;
@@ -139,15 +142,21 @@ class _RecordingListItemState extends State<RecordingListItem> {
   void initState() {
     super.initState();
     SherpaService.I.addListener(_onSherpaChanged);
+    service.addListener(_onServiceChanged);
   }
 
   @override
   void dispose() {
     SherpaService.I.removeListener(_onSherpaChanged);
+    service.removeListener(_onServiceChanged);
     super.dispose();
   }
 
   void _onSherpaChanged() {
+    if (mounted) setState(() {});
+  }
+
+  void _onServiceChanged() {
     if (mounted) setState(() {});
   }
 
@@ -161,8 +170,6 @@ class _RecordingListItemState extends State<RecordingListItem> {
     return Card(
       margin: const EdgeInsets.only(top: 4, bottom: 4),
       elevation: isActive ? 2 : 0.5,
-      surfaceTintColor: Colors.transparent,
-      shadowColor: isActive ? scheme.primary.withAlpha(60) : Colors.black12,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(12),
         side: isActive
@@ -231,33 +238,61 @@ class _RecordingListItemState extends State<RecordingListItem> {
             ),
           ),
 
-          // 转写内容（可折叠）
+          // 转写内容 & AI 摘要（可折叠）
           Builder(builder: (_) {
             final tx = SherpaService.I.text(info.path);
-            if (tx == null || tx.isEmpty || tx == '...') return const SizedBox.shrink();
+            final hasTx = tx != null && tx.isNotEmpty && tx != '...';
+            final sm = SherpaService.I.summary(info.path);
+            final hasSm = sm != null && sm.isNotEmpty;
+            if (!hasTx && !hasSm && sm != '...') return const SizedBox.shrink();
+
             return Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Divider(height: 1),
-                InkWell(
-                  onTap: () => setState(() => _transcriptExpanded = !_transcriptExpanded),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                    child: Row(
-                      children: [
-                        Icon(Icons.description_outlined, size: 16, color: scheme.primary.withAlpha(180)),
-                        const SizedBox(width: 8),
-                        Text('转写内容', style: theme.textTheme.labelMedium?.copyWith(color: scheme.primary)),
-                        const Spacer(),
-                        Icon(_transcriptExpanded ? Icons.expand_less : Icons.expand_more, size: 18, color: scheme.onSurfaceVariant),
-                      ],
-                    ),
-                  ),
+                // 转写折叠区
+                if (hasTx) _CollapsibleSection(
+                  icon: Icons.description_outlined,
+                  iconColor: scheme.primary,
+                  containerColor: scheme.primaryContainer.withAlpha(80),
+                  title: '转写内容',
+                  subtitle: '点击查看完整转写',
+                  isExpanded: _transcriptExpanded,
+                  onToggle: () => setState(() => _transcriptExpanded = !_transcriptExpanded),
+                  child: Text(tx, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, height: 1.6)),
                 ),
-                if (_transcriptExpanded)
+                // AI 摘要折叠区
+                if (hasSm) _CollapsibleSection(
+                  icon: Icons.auto_awesome,
+                  iconColor: scheme.tertiary,
+                  containerColor: scheme.tertiaryContainer.withAlpha(80),
+                  title: 'AI 摘要',
+                  subtitle: '点击查看摘要内容',
+                  isExpanded: _summaryExpanded,
+                  onToggle: () => setState(() => _summaryExpanded = !_summaryExpanded),
+                  child: Text(sm, style: theme.textTheme.bodySmall?.copyWith(color: scheme.tertiary, height: 1.6)),
+                ),
+                // AI 总结加载中
+                if (!hasSm && sm == '...')
                   Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
-                    child: Text(tx, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant, height: 1.5)),
+                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    child: Row(children: [
+                      SizedBox(
+                        width: 32, height: 32,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: scheme.tertiary),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text('AI 总结中…', style: theme.textTheme.labelLarge?.copyWith(color: scheme.onSurface, fontWeight: FontWeight.w500)),
+                            Text('正在生成摘要，请稍候', style: theme.textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant)),
+                          ],
+                        ),
+                      ),
+                    ]),
                   ),
               ],
             );
@@ -291,10 +326,32 @@ class _RecordingListItemState extends State<RecordingListItem> {
                       icon: Icon(
                         tx != null ? Icons.check_circle : ok ? Icons.text_snippet : Icons.text_snippet_outlined,
                         size: 22,
-                        color: tx != null ? Colors.green : ok ? scheme.primary : scheme.onSurfaceVariant.withAlpha(80),
+                        color: tx != null ? scheme.primary : ok ? scheme.primary : scheme.onSurfaceVariant.withAlpha(80),
                       ),
                       onPressed: () => _onTranscribeTap(context, tx != null, ok),
                       tooltip: tx != null ? '重新转写' : ok ? '转写' : '请先下载模型',
+                    );
+                  },
+                ),
+                // AI 总结按钮
+                ListenableBuilder(
+                  listenable: SherpaService.I,
+                  builder: (_, __) {
+                    final tx = SherpaService.I.text(info.path);
+                    final sm = SherpaService.I.summary(info.path);
+                    final canSum = SherpaService.I.canSummarize;
+                    final hasTx = tx != null && tx.isNotEmpty && tx != '...';
+                    if (!canSum || !hasTx) return const SizedBox.shrink();
+                    if (sm == '...') return const SizedBox(width: 26, height: 26, child: CircularProgressIndicator(strokeWidth: 2));
+                    final hasSummary = sm != null && sm.isNotEmpty;
+                    return IconButton(
+                      icon: Icon(
+                        hasSummary ? Icons.auto_awesome : Icons.auto_awesome_outlined,
+                        size: 22,
+                        color: hasSummary ? scheme.tertiary : scheme.onSurfaceVariant.withAlpha(180),
+                      ),
+                      onPressed: () => _onSummarizeTap(context, hasSummary),
+                      tooltip: hasSummary ? '重新总结' : 'AI 总结',
                     );
                   },
                 ),
@@ -321,6 +378,27 @@ class _RecordingListItemState extends State<RecordingListItem> {
       _confirmOverwrite(context);
     } else {
       SherpaService.I.run(info.path);
+    }
+  }
+
+  void _onSummarizeTap(BuildContext context, bool hasSummary) {
+    if (hasSummary) {
+      showDialog(
+        context: context,
+        builder: (ctx) => AppDialog(
+          title: const Text('重新总结'),
+          content: Text('"${info.filename}" 已有 AI 总结，是否重新生成？'),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+            TextButton(
+              onPressed: () { Navigator.pop(ctx); SherpaService.I.summarize(info.path); },
+              child: Text('重新生成', style: TextStyle(color: Theme.of(ctx).colorScheme.primary)),
+            ),
+          ],
+        ),
+      );
+    } else {
+      SherpaService.I.summarize(info.path);
     }
   }
 
@@ -361,25 +439,49 @@ class _RecordingListItemState extends State<RecordingListItem> {
 
 // ---- 悬浮迷你播放器（常驻）----------------------------------------------------
 
-class MiniPlayer extends StatelessWidget {
+class MiniPlayer extends StatefulWidget {
   final RecordingService service;
   final ImageProvider? coverImage;
 
   const MiniPlayer({super.key, required this.service, this.coverImage});
 
   @override
+  State<MiniPlayer> createState() => _MiniPlayerState();
+}
+
+class _MiniPlayerState extends State<MiniPlayer> {
+  RecordingService get _service => widget.service;
+
+  @override
+  void initState() {
+    super.initState();
+    _service.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    _service.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final theme = Theme.of(context);
-    final hasTrack = service.playingPath != null;
+    final hasTrack = _service.playingPath != null;
 
-    final currentInfo = service.recordings.where(
-      (r) => r.path == service.playingPath,
+    // 用 allRecordings 而非 recordings，因为原生录音是 content:// URI
+    final currentInfo = _service.allRecordings.where(
+      (r) => r.path == _service.playingPath,
     );
     final filename = currentInfo.isNotEmpty ? currentInfo.first.filename : '';
 
-    final durationMs = service.playbackDuration.inMilliseconds.toDouble();
-    final positionMs = service.playbackPosition.inMilliseconds.toDouble();
+    final durationMs = _service.playbackDuration.inMilliseconds.toDouble();
+    final positionMs = _service.playbackPosition.inMilliseconds.toDouble();
     final max = durationMs > 0 ? durationMs : 1.0;
 
     return Container(
@@ -405,8 +507,8 @@ class MiniPlayer extends StatelessWidget {
                         ? scheme.primaryContainer
                         : scheme.surfaceContainerHighest,
                   ),
-                  child: coverImage != null
-                      ? Image(image: coverImage!, fit: BoxFit.cover)
+                  child: widget.coverImage != null
+                      ? Image(image: widget.coverImage!, fit: BoxFit.cover)
                       : Icon(
                           Icons.mic,
                           size: 28,
@@ -448,7 +550,7 @@ class MiniPlayer extends StatelessWidget {
                         value: positionMs.clamp(0.0, max),
                         max: max,
                         onChanged: hasTrack
-                            ? (v) => service.seek(Duration(milliseconds: v.round()))
+                            ? (v) => _service.seek(Duration(milliseconds: v.round()))
                             : null,
                       ),
                     ),
@@ -458,7 +560,7 @@ class MiniPlayer extends StatelessWidget {
                       children: [
                         Text(
                           hasTrack
-                              ? service.playbackPositionFormatted
+                              ? _service.playbackPositionFormatted
                               : '--:--',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: scheme.onSurfaceVariant,
@@ -466,7 +568,7 @@ class MiniPlayer extends StatelessWidget {
                         ),
                         Text(
                           hasTrack
-                              ? service.playbackDurationFormatted
+                              ? _service.playbackDurationFormatted
                               : '--:--',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: scheme.onSurfaceVariant,
@@ -481,14 +583,14 @@ class MiniPlayer extends StatelessWidget {
               // 播放按钮
               IconButton(
                 icon: Icon(
-                  hasTrack && service.isPlaying
+                  hasTrack && _service.isPlaying
                       ? Icons.pause_circle_filled
                       : Icons.play_circle_filled,
                   size: 44,
                   color: hasTrack ? scheme.primary : scheme.onSurfaceVariant.withAlpha(100),
                 ),
                 onPressed: hasTrack
-                    ? () => service.togglePlayPause(service.playingPath!)
+                    ? () => _service.togglePlayPause(_service.playingPath!)
                     : null,
               ),
             ],
@@ -499,11 +601,129 @@ class MiniPlayer extends StatelessWidget {
   }
 }
 
+// ---- MD3 可折叠区域 --------------------------------------------------------
+
+/// Google Material Design 3 风格的可折叠内容区。
+///
+/// 特性：
+/// - 圆角图标容器（MD3 chip 风格）
+/// - 标题 + 副标题层次
+/// - 展开/折叠动画（200ms 缓动 + AnimatedSize）
+/// - 展开内容使用 surfaceContainerLow 背景区分层次
+class _CollapsibleSection extends StatelessWidget {
+  const _CollapsibleSection({
+    required this.icon,
+    required this.iconColor,
+    required this.containerColor,
+    required this.title,
+    required this.subtitle,
+    required this.isExpanded,
+    required this.onToggle,
+    required this.child,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final Color containerColor;
+  final String title;
+  final String subtitle;
+  final bool isExpanded;
+  final VoidCallback onToggle;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        // 折叠头部
+        InkWell(
+          onTap: onToggle,
+          borderRadius: BorderRadius.circular(8),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            child: Row(
+              children: [
+                // 图标容器
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: containerColor,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Icon(icon, size: 18, color: iconColor),
+                ),
+                const SizedBox(width: 12),
+                // 标题区
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        title,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          color: scheme.onSurface,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                      if (subtitle.isNotEmpty)
+                        Text(
+                          subtitle,
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                // 展开箭头（旋转动画）
+                AnimatedRotation(
+                  turns: isExpanded ? 0.5 : 0,
+                  duration: const Duration(milliseconds: 200),
+                  curve: Curves.easeInOut,
+                  child: Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 22,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        // 展开内容
+        AnimatedSize(
+          duration: const Duration(milliseconds: 300),
+          curve: Curves.easeInOut,
+          alignment: Alignment.topCenter,
+          child: isExpanded
+              ? Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: scheme.surfaceContainerLow,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: child,
+                )
+              : const SizedBox.shrink(),
+        ),
+      ],
+    );
+  }
+}
+
 // ---- 通话方向标签 ----
 Color _directionColor(String dir, ColorScheme scheme) => switch (dir) {
-  'IN' => Colors.green,
-  'OUT' => Colors.blue,
-  'CONFERENCE' => Colors.purple,
+  'IN' => scheme.primary,
+  'OUT' => scheme.tertiary,
+  'CONFERENCE' => scheme.secondary,
   _ => scheme.onSurfaceVariant,
 };
 

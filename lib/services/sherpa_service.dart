@@ -8,6 +8,8 @@ import 'package:sherpa_onnx/sherpa_onnx.dart';
 import 'native_bridge.dart';
 import 'model_manager.dart';
 import 'recording_service.dart';
+import 'settings_service.dart';
+import 'openai_service.dart';
 
 /// Isolate 入口 — 在后台线程执行 Sherpa 推理，避免阻塞 UI 导致 ANR
 String _transcribeIsolate((String, String, Float32List) args) {
@@ -34,24 +36,29 @@ class SherpaService extends ChangeNotifier {
   static final SherpaService I = SherpaService._singleton();
 
   final _results = <String, String>{};
+  final _summaries = <String, String>{};
   bool _auto = false;
   bool _isRunning = false;
   int _pollInterval = 30;
   RecordingService? _recordingService;
+  SettingsService? _settingsService;
   Timer? _poller;
 
   bool get ready => ModelManager.I.status == ModelStatus.ready;
   bool get auto => _auto;
   bool get isRunning => _isRunning;
   int get pollInterval => _pollInterval;
+  bool get canSummarize => _settingsService?.enableSummarization == true && (_settingsService?.apiKey.isNotEmpty == true);
 
-  /// 注入录音服务引用（用于轮询时获取录音列表）
+  /// 注入服务引用
   void setRecordingService(RecordingService rs) => _recordingService = rs;
+  void setSettingsService(SettingsService ss) => _settingsService = ss;
 
   /// 从外部加载已有转写结果（如从 JSON 元数据恢复）
   void loadResult(String uri, String txt) => _results[uri] = txt;
 
   String? text(String uri) => _results[uri];
+  String? summary(String uri) => _summaries[uri];
 
   Future<void> init() async {
     await _loadState();
@@ -59,6 +66,8 @@ class SherpaService extends ChangeNotifier {
     await ModelManager.I.init();
     // 如果模型已就绪且自动转写已开启，启动轮询
     _syncPoller();
+    // 延迟加载已持久化的 AI 摘要（等录音列表加载完毕）
+    Future.delayed(const Duration(seconds: 1), _loadSummaries);
   }
 
   void _onModelChanged() {
@@ -126,6 +135,28 @@ class SherpaService extends ChangeNotifier {
         title: '转写完成',
         body: '$filename\n${t.length > 80 ? '${t.substring(0, 80)}…' : t}',
       );
+
+      // 自动触发 AI 总结
+      final settings = _settingsService;
+      if (settings != null && settings.enableSummarization && settings.apiKey.isNotEmpty && t.isNotEmpty) {
+        _summaries[uri] = '...';
+        notifyListeners();
+        final s = await OpenAIService.I.summarize(
+          apiKey: settings.apiKey,
+          baseUrl: settings.apiBaseUrl,
+          model: settings.summarizeModel,
+          transcription: t,
+        );
+        if (s != null) {
+          _summaries[uri] = s;
+          final written = await NativeBridge.instance.writeSummary(uri, s);
+          debugPrint('AI 摘要完成: ${s.length} 字, 回写JSON: $written');
+          notifyListeners();
+        } else {
+          _summaries.remove(uri);
+          notifyListeners();
+        }
+      }
     } else {
       await NativeBridge.instance.showTranscriptionNotification(
         type: 'complete',
@@ -166,6 +197,48 @@ class SherpaService extends ChangeNotifier {
       _isRunning = false;
       if (notify) notifyListeners();
     }
+  }
+
+  /// 从本地 JSON 元数据中恢复已保存的 AI 摘要
+  Future<void> _loadSummaries() async {
+    final recordings = _recordingService?.allRecordings;
+    if (recordings == null || recordings.isEmpty) return;
+    for (final r in recordings) {
+      final s = await NativeBridge.instance.readSummary(r.path);
+      if (s != null && s.isNotEmpty) {
+        _summaries[r.path] = s;
+      }
+    }
+    notifyListeners();
+  }
+
+  /// 刷新摘要缓存并通知 UI
+  Future<void> refreshSummaries() => _loadSummaries();
+
+  /// 手动触发 AI 总结（供 UI 按钮调用）
+  Future<void> summarize(String uri) async {
+    final settings = _settingsService;
+    if (settings == null || settings.apiKey.isEmpty || !settings.enableSummarization) return;
+    final t = text(uri);
+    if (t == null || t.isEmpty || t == '...') return;
+
+    _summaries[uri] = '...';
+    notifyListeners();
+
+    final s = await OpenAIService.I.summarize(
+      apiKey: settings.apiKey,
+      baseUrl: settings.apiBaseUrl,
+      model: settings.summarizeModel,
+      transcription: t,
+    );
+    if (s != null) {
+      _summaries[uri] = s;
+      final written = await NativeBridge.instance.writeSummary(uri, s);
+      debugPrint('AI 摘要完成: ${s.length} 字, 回写JSON: $written');
+    } else {
+      _summaries.remove(uri);
+    }
+    notifyListeners();
   }
 
   Future<void> onDone(String uri) async {

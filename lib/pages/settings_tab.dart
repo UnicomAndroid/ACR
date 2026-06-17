@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -169,6 +170,10 @@ class SettingsTab extends StatelessWidget {
         _SectionHeader(title: '语音转写'),
         _SettingsCard(child: _TranscriptionSettings()),
 
+        // AI 总结
+        _SectionHeader(title: 'AI 总结'),
+        _SettingsCard(child: _AISummarySettings(settingsService: settingsService)),
+
         // =====================================================================
         // 关于
         // =====================================================================
@@ -217,8 +222,6 @@ class _SettingsCard extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
       elevation: 1,
-      surfaceTintColor: Colors.transparent,
-      shadowColor: Colors.black12,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: child,
     );
@@ -412,7 +415,7 @@ class _FormatTile extends StatelessWidget {
       context: context,
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (ctx) {
         final scheme = Theme.of(ctx).colorScheme;
@@ -509,7 +512,7 @@ class _AudioSourceTile extends StatelessWidget {
       context: context,
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (ctx) {
         final scheme = Theme.of(ctx).colorScheme;
@@ -616,7 +619,7 @@ class _QualityTile extends StatelessWidget {
       context: context,
       backgroundColor: Theme.of(context).colorScheme.surface,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (ctx) {
         final scheme = Theme.of(ctx).colorScheme;
@@ -824,7 +827,7 @@ class _TranscriptionSettingsState extends State<_TranscriptionSettings> {
       context: context,
       backgroundColor: scheme.surface,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
       ),
       builder: (ctx) {
         final s = Theme.of(ctx).colorScheme;
@@ -876,7 +879,7 @@ class _TranscriptionSettingsState extends State<_TranscriptionSettings> {
         subtitle: Text(_status, style: t.textTheme.labelSmall?.copyWith(color: s.onSurfaceVariant)),
         trailing: _mm.status == ModelStatus.downloading
           ? SizedBox(width:24,height:24,child:CircularProgressIndicator(value:_mm.progress>0?_mm.progress:null,strokeWidth:2,color:s.primary))
-          : _mm.status == ModelStatus.ready ? Icon(Icons.check_circle,color:Colors.green,size:22)
+          : _mm.status == ModelStatus.ready ? Icon(Icons.check_circle,color:s.primary,size:22)
           : FilledButton.tonal(onPressed:()=>_mm.download(), child:const Text('下载')),
       ),
       if (_mm.status == ModelStatus.downloading)
@@ -903,7 +906,8 @@ class _TranscriptionSettingsState extends State<_TranscriptionSettings> {
     ModelStatus.error => Icons.error, _ => Icons.download,
   };
   Color get _color => switch (_mm.status) {
-    ModelStatus.ready => Colors.green, ModelStatus.downloading => Theme.of(context).colorScheme.primary,
+    ModelStatus.ready => Theme.of(context).colorScheme.primary,
+    ModelStatus.downloading => Theme.of(context).colorScheme.primary,
     ModelStatus.error => Theme.of(context).colorScheme.error, _ => Theme.of(context).colorScheme.primary,
   };
   String get _status => switch (_mm.status) {
@@ -912,4 +916,82 @@ class _TranscriptionSettingsState extends State<_TranscriptionSettings> {
     ModelStatus.error => '下载失败',
     _ => '轻点下载 (~90MB)',
   };
+}
+
+// ---- AI 总结设置 --------------------------------------------------------------
+
+class _AISummarySettings extends StatefulWidget {
+  final SettingsService settingsService;
+  const _AISummarySettings({required this.settingsService});
+
+  @override State<_AISummarySettings> createState() => _AISummarySettingsState();
+}
+
+class _AISummarySettingsState extends State<_AISummarySettings> {
+  SettingsService get _s => widget.settingsService;
+
+  @override void initState() { super.initState(); _s.addListener(_onChanged); }
+  @override void dispose() { _s.removeListener(_onChanged); super.dispose(); }
+  void _onChanged() { if (mounted) setState(() {}); }
+
+  Future<void> _editText(String title, String current, ValueChanged<String> onSave) async {
+    final ctrl = TextEditingController(text: current);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AppDialog(
+        title: Text(title),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          obscureText: title.contains('Key'),
+          decoration: const InputDecoration(border: OutlineInputBorder()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          FilledButton(onPressed: () => Navigator.pop(ctx, ctrl.text.trim()), child: const Text('保存')),
+        ],
+      ),
+    );
+    if (result != null && mounted) onSave(result);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final t = Theme.of(context), s = t.colorScheme;
+    return Column(children: [
+      SwitchListTile(
+        secondary: Icon(Icons.auto_awesome, color: s.primary),
+        title: Text('启用 AI 总结', style: t.textTheme.bodyMedium),
+        subtitle: Text('转写完成后自动调用 API 生成摘要', style: t.textTheme.labelSmall?.copyWith(color: s.onSurfaceVariant)),
+        value: _s.enableSummarization,
+        onChanged: (v) => _s.enableSummarization = v,
+      ),
+      if (_s.enableSummarization) ...[
+        const Divider(height: 1, indent: 56),
+        ListTile(
+          leading: Icon(Icons.vpn_key_outlined, color: s.primary),
+          title: Text('API Key', style: t.textTheme.bodyMedium),
+          subtitle: Text(_s.apiKey.isEmpty ? '未设置' : '•' * min(_s.apiKey.length, 20), style: t.textTheme.labelSmall?.copyWith(color: s.onSurfaceVariant)),
+          trailing: const Icon(Icons.chevron_right, size: 20),
+          onTap: () => _editText('API Key', _s.apiKey, (v) => _s.apiKey = v),
+        ),
+        const Divider(height: 1, indent: 56),
+        ListTile(
+          leading: Icon(Icons.link, color: s.primary),
+          title: Text('API 地址', style: t.textTheme.bodyMedium),
+          subtitle: Text(_s.apiBaseUrl, style: t.textTheme.labelSmall?.copyWith(color: s.onSurfaceVariant), maxLines: 1, overflow: TextOverflow.ellipsis),
+          trailing: const Icon(Icons.chevron_right, size: 20),
+          onTap: () => _editText('API 地址', _s.apiBaseUrl, (v) => _s.apiBaseUrl = v),
+        ),
+        const Divider(height: 1, indent: 56),
+        ListTile(
+          leading: Icon(Icons.model_training, color: s.primary),
+          title: Text('模型', style: t.textTheme.bodyMedium),
+          subtitle: Text(_s.summarizeModel, style: t.textTheme.labelSmall?.copyWith(color: s.onSurfaceVariant)),
+          trailing: const Icon(Icons.chevron_right, size: 20),
+          onTap: () => _editText('模型名称', _s.summarizeModel, (v) => _s.summarizeModel = v),
+        ),
+      ],
+    ]);
+  }
 }

@@ -43,6 +43,7 @@ void main() async {
   WidgetsBinding.instance.addPostFrameCallback((_) {
     recordingService.refreshNativeRecordings();
     SherpaService.I.setRecordingService(recordingService);
+    SherpaService.I.setSettingsService(settingsService);
     ModelManager.I.init(); SherpaService.I.init();
   });
 }
@@ -84,22 +85,19 @@ class MyApp extends StatelessWidget {
             appBarTheme: AppBarTheme(
               backgroundColor: lightScheme.surface,
               foregroundColor: lightScheme.onSurface,
-              elevation: 2,
-              surfaceTintColor: Colors.transparent,
-              shadowColor: Colors.black26,
+              elevation: 0,
+              scrolledUnderElevation: 2,
               centerTitle: false,
             ),
             cardTheme: CardThemeData(
-              elevation: 1.5,
-              surfaceTintColor: Colors.transparent,
-              shadowColor: Colors.black12,
+              elevation: 1,
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             ),
             inputDecorationTheme: InputDecorationTheme(
               filled: true,
               fillColor: lightScheme.surfaceContainerHighest.withAlpha(120),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(8),
                 borderSide: BorderSide.none,
               ),
             ),
@@ -107,12 +105,8 @@ class MyApp extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: lightScheme.primary,
                 foregroundColor: lightScheme.onPrimary,
-                elevation: 1,
-                surfaceTintColor: Colors.transparent,
-                shadowColor: lightScheme.primary.withAlpha(60),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                elevation: 0,
+                shape: const StadiumBorder(),
               ),
             ),
           ),
@@ -124,22 +118,19 @@ class MyApp extends StatelessWidget {
             appBarTheme: AppBarTheme(
               backgroundColor: darkScheme.surface,
               foregroundColor: darkScheme.onSurface,
-              elevation: 2,
-              surfaceTintColor: Colors.transparent,
-              shadowColor: Colors.black38,
+              elevation: 0,
+              scrolledUnderElevation: 2,
               centerTitle: false,
             ),
             cardTheme: CardThemeData(
-              elevation: 1.5,
-              surfaceTintColor: Colors.transparent,
-              shadowColor: Colors.black26,
+              elevation: 1,
               margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
             ),
             inputDecorationTheme: InputDecorationTheme(
               filled: true,
               fillColor: darkScheme.surfaceContainerHighest.withAlpha(80),
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(8),
                 borderSide: BorderSide.none,
               ),
             ),
@@ -147,12 +138,8 @@ class MyApp extends StatelessWidget {
               style: ElevatedButton.styleFrom(
                 backgroundColor: darkScheme.primary,
                 foregroundColor: darkScheme.onPrimary,
-                elevation: 1,
-                surfaceTintColor: Colors.transparent,
-                shadowColor: darkScheme.primary.withAlpha(80),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+                elevation: 0,
+                shape: const StadiumBorder(),
               ),
             ),
           ),

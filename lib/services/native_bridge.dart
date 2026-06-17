@@ -151,6 +151,14 @@ class NativeBridge {
     try { return await _channel.invokeMethod('writeTranscription', {'uri': uri, 'text': text}) == true; }
     catch (e) { debugPrint('writeTranscription: $e'); return false; }
   }
+  Future<bool> writeSummary(String uri, String text) async {
+    try { return await _channel.invokeMethod('writeSummary', {'uri': uri, 'text': text}) == true; }
+    catch (e) { debugPrint('writeSummary: $e'); return false; }
+  }
+  Future<String?> readSummary(String uri) async {
+    try { return await _channel.invokeMethod('readSummary', {'uri': uri}); }
+    catch (e) { debugPrint('readSummary: $e'); return null; }
+  }
 
   // ---- SAF 目录选择器 -----------------------------------------------------
 

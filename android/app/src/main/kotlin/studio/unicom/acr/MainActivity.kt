@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.documentfile.provider.DocumentFile
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
@@ -16,6 +17,7 @@ import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import studio.unicom.acr.format.AudioSource
 import studio.unicom.acr.format.Format
 import studio.unicom.acr.output.CallMetadataJson
@@ -71,6 +73,8 @@ class MainActivity : FlutterActivity() {
                 "readFileBytes" -> readFileBytes(call, result)
                 "decodeAudioToPcm" -> decodeAudioToPcm(call, result)
                 "writeTranscription" -> writeTranscription(call, result)
+                "writeSummary" -> writeSummary(call, result)
+                "readSummary" -> readSummary(call, result)
                 "showTranscriptionNotification" -> showTranscriptionNotification(call, result)
                 else -> result.notImplemented()
             }
@@ -234,14 +238,21 @@ class MainActivity : FlutterActivity() {
             val jsonFile = group.find { it.name.endsWith(".json") }
             if (jsonFile == null) continue
 
-            // Parse metadata from JSON
+            // Parse metadata from JSON (with corruption recovery)
             val metadata = try {
                 val jsonText = if (isDefaultDir) {
                     java.io.File(jsonFile.uri.removePrefix("file://")).readText()
                 } else {
                     contentResolver.openInputStream(Uri.parse(jsonFile.uri))?.use { String(it.readBytes()) }
                 }
-                if (jsonText != null) JSON_FORMAT.decodeFromString<CallMetadataJson>(jsonText) else null
+                if (jsonText != null) {
+                    try {
+                        JSON_FORMAT.decodeFromString<CallMetadataJson>(jsonText)
+                    } catch (_: Exception) {
+                        val s = salvageJson(jsonText)
+                        if (s != null) JSON_FORMAT.decodeFromString<CallMetadataJson>(s) else null
+                    }
+                } else null
             } catch (_: Exception) { null }
 
             // Find audio file (not .json/.log/.txt)
@@ -268,8 +279,59 @@ class MainActivity : FlutterActivity() {
                 "isManual" to isManual,
                 "direction" to direction,
                 "transcription" to metadata?.transcription,
+                "summary" to metadata?.summary,
             ))
         }
+    }
+
+    /** Read and parse a JSON companion file, with automatic corruption recovery. */
+    private fun readJsonRobust(jsonFile: String): JsonObject? {
+        val raw = if (jsonFile.startsWith("content://")) {
+            contentResolver.openInputStream(Uri.parse(jsonFile))?.use { String(it.readBytes()) }
+        } else { java.io.File(Uri.parse(jsonFile).path!!).readText() }
+            ?: return null
+
+        // Try strict parse first
+        try {
+            return Json.parseToJsonElement(raw).jsonObject
+        } catch (_: Exception) { }
+
+        // Try to salvage: find first complete JSON object
+        val salvaged = salvageJson(raw)
+        if (salvaged != null) {
+            try {
+                android.util.Log.d("ACR", "从损坏的 JSON 中恢复了 ${salvaged.length} 字节")
+                return Json.parseToJsonElement(salvaged).jsonObject
+            } catch (_: Exception) { }
+        }
+        return null
+    }
+
+    /** Find the first complete JSON object in a corrupted string by counting braces. */
+    private fun salvageJson(raw: String): String? {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        for ((i, c) in raw.withIndex()) {
+            if (escaped) { escaped = false; continue }
+            if (c == '\\' && inString) { escaped = true; continue }
+            if (c == '"') { inString = !inString; continue }
+            if (inString) continue
+            if (c == '{') depth++
+            if (c == '}') {
+                depth--
+                if (depth == 0) return raw.substring(0, i + 1)
+            }
+        }
+        return null
+    }
+
+    /** Write JSON object back to the companion file (SAF-aware, with truncation). */
+    private fun writeJsonToFile(jsonFile: String, obj: JsonObject) {
+        val updated = Json.encodeToString(JsonElement.serializer(), obj)
+        if (jsonFile.startsWith("content://")) {
+            contentResolver.openOutputStream(Uri.parse(jsonFile), "wt")?.use { it.write(updated.toByteArray()) }
+        } else { java.io.File(Uri.parse(jsonFile).path!!).writeText(updated) }
     }
 
     private fun writeTranscription(call: MethodCall, result: MethodChannel.Result) {
@@ -277,7 +339,6 @@ class MainActivity : FlutterActivity() {
             val uriStr = call.argument<String>("uri") ?: throw IllegalArgumentException("Missing uri")
             val text = call.argument<String>("text") ?: throw IllegalArgumentException("Missing text")
             val audioUri = Uri.parse(uriStr)
-            // content:// URI 的 lastPathSegment 是编码文档ID而非文件名，需用 SAF 取真实文件名
             val name = if (uriStr.startsWith("content://")) {
                 DocumentFile.fromSingleUri(this, audioUri)?.name ?: audioUri.lastPathSegment
             } else {
@@ -287,29 +348,71 @@ class MainActivity : FlutterActivity() {
             if (baseName.isEmpty()) { result.success(false); return }
 
             val jsonName = "$baseName.json"
-            // Try to find JSON in same directory via SAF, then fallback to default dir
             val jsonFile = findCompanion(uriStr, jsonName)
             if (jsonFile == null) {
                 android.util.Log.d("ACR", "writeTranscription: 未找到 JSON 文件 name=$jsonName audioUri=$uriStr")
                 result.success(false); return
             }
 
-            val jsonStr = if (jsonFile.startsWith("content://")) {
-                contentResolver.openInputStream(Uri.parse(jsonFile))?.use { String(it.readBytes()) }
-            } else { java.io.File(Uri.parse(jsonFile).path!!).readText() }
-            if (jsonStr == null) { result.success(false); return }
+            val obj = readJsonRobust(jsonFile)
+                ?: return result.error("WRITE_ERR", "无法解析 JSON（已损坏且无法恢复）", null)
 
-            // 用正规 JSON 解析写入 transcription 字段（自动覆盖已有字段，不会重复）
-            val element = Json.parseToJsonElement(jsonStr)
-            val map = element.jsonObject.toMutableMap()
+            val map = obj.toMutableMap()
             map["transcription"] = JsonPrimitive(text)
-            val updated = Json.encodeToString(JsonElement.serializer(), JsonObject(map))
-
-            if (jsonFile.startsWith("content://")) {
-                contentResolver.openOutputStream(Uri.parse(jsonFile))?.use { it.write(updated.toByteArray()) }
-            } else { java.io.File(Uri.parse(jsonFile).path!!).writeText(updated) }
+            writeJsonToFile(jsonFile, JsonObject(map))
             result.success(true)
         } catch (e: Exception) { result.error("WRITE_ERR", e.message, null) }
+    }
+
+    private fun writeSummary(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            val uriStr = call.argument<String>("uri") ?: throw IllegalArgumentException("Missing uri")
+            val text = call.argument<String>("text") ?: throw IllegalArgumentException("Missing text")
+            val audioUri = Uri.parse(uriStr)
+            val name = if (uriStr.startsWith("content://")) {
+                DocumentFile.fromSingleUri(this, audioUri)?.name ?: audioUri.lastPathSegment
+            } else {
+                audioUri.lastPathSegment
+            } ?: throw IllegalArgumentException("Bad uri")
+            val baseName = name.substringBeforeLast('.')
+            if (baseName.isEmpty()) { result.success(false); return }
+
+            val jsonName = "$baseName.json"
+            val jsonFile = findCompanion(uriStr, jsonName)
+            if (jsonFile == null) {
+                android.util.Log.d("ACR", "writeSummary: 未找到 JSON 文件 name=$jsonName audioUri=$uriStr")
+                result.success(false); return
+            }
+
+            val obj = readJsonRobust(jsonFile)
+                ?: return result.error("WRITE_ERR", "无法解析 JSON（已损坏且无法恢复）", null)
+
+            val map = obj.toMutableMap()
+            map["summary"] = JsonPrimitive(text)
+            writeJsonToFile(jsonFile, JsonObject(map))
+            result.success(true)
+        } catch (e: Exception) { result.error("WRITE_ERR", e.message, null) }
+    }
+
+    private fun readSummary(call: MethodCall, result: MethodChannel.Result) {
+        try {
+            val uriStr = call.argument<String>("uri") ?: throw IllegalArgumentException("Missing uri")
+            val audioUri = Uri.parse(uriStr)
+            val name = if (uriStr.startsWith("content://")) {
+                DocumentFile.fromSingleUri(this, audioUri)?.name ?: audioUri.lastPathSegment
+            } else {
+                audioUri.lastPathSegment
+            } ?: throw IllegalArgumentException("Bad uri")
+            val baseName = name.substringBeforeLast('.')
+            if (baseName.isEmpty()) { result.success(null); return }
+
+            val jsonName = "$baseName.json"
+            val jsonFile = findCompanion(uriStr, jsonName)
+            if (jsonFile == null) { result.success(null); return }
+
+            val obj = readJsonRobust(jsonFile)
+            result.success(obj?.get("summary")?.jsonPrimitive?.content)
+        } catch (e: Exception) { result.error("READ_ERR", e.message, null) }
     }
 
     private fun findCompanion(audioUri: String, name: String): String? {
@@ -322,16 +425,24 @@ class MainActivity : FlutterActivity() {
                 if (f != null) return f.uri.toString()
             } catch (_: Exception) { }
 
-            // Try 2: via the saved tree URI (fallback)
+            // Try 2: via the saved tree URI — recursively search subdirectories
             try {
                 val treeUri = prefs.outputDir
                 if (treeUri != null) {
                     val tree = DocumentFile.fromTreeUri(this, treeUri)
                     if (tree?.exists() == true) {
-                        for (child in tree.listFiles()) {
-                            if (child.isFile && child.name == name) return child.uri.toString()
-                        }
+                        val found = findInTree(tree, name)
+                        if (found != null) return found
                     }
+                }
+            } catch (_: Exception) { }
+
+            // Try 3: fallback to default directory (recordings may not have been moved yet)
+            try {
+                val defaultDir = java.io.File(getExternalFilesDir(null), "recordings")
+                if (defaultDir.isDirectory) {
+                    val f = java.io.File(defaultDir, name)
+                    if (f.isFile) return "file://${f.absolutePath}"
                 }
             } catch (_: Exception) { }
             return null
@@ -344,23 +455,124 @@ class MainActivity : FlutterActivity() {
         return null
     }
 
+    /** Recursively search a SAF tree directory for a file by name. */
+    private fun findInTree(dir: DocumentFile, name: String): String? {
+        for (child in dir.listFiles()) {
+            if (child.isFile && child.name == name) return child.uri.toString()
+            if (child.isDirectory) {
+                val found = findInTree(child, name)
+                if (found != null) return found
+            }
+        }
+        return null
+    }
+
     private fun deleteRecording(call: MethodCall, result: MethodChannel.Result) {
         try {
             val uriStr = call.argument<String>("uri") ?: throw IllegalArgumentException("Missing uri")
             val uri = Uri.parse(uriStr)
             val docFile = DocumentFile.fromSingleUri(this, uri)
-            var deleted = docFile?.delete() ?: false
-            // Also delete companion files (JSON metadata, logs)
+
+            // ---- 在删除音频文件之前，解析伴生文件名和父目录引用 ----
+            // SAF 外部存储上，先删音频再访问 parentFile 可能返回 null（文档已不存在）
             val name = docFile?.name ?: uri.lastPathSegment ?: ""
             val baseName = name.substringBeforeLast('.')
-            if (baseName.isNotEmpty()) {
-                val parent = docFile?.parentFile
-                val companions = listOf("$baseName.json", "$baseName.log", "$baseName.logcat")
-                parent?.listFiles()?.filter { it.name in companions }?.forEach { it.delete() }
+            val companions = if (baseName.isNotEmpty()) {
+                listOf("$baseName.json", "$baseName.log", "$baseName.logcat")
+            } else emptyList()
+
+            // 预先获取父目录引用（音频文件尚未删除，引用有效）
+            var parentDir: DocumentFile? = null
+            var treeDir: DocumentFile? = null
+            if (companions.isNotEmpty()) {
+                try { parentDir = docFile?.parentFile } catch (_: Exception) { }
+                try {
+                    val treeUri = prefs.outputDir
+                    if (treeUri != null) {
+                        treeDir = DocumentFile.fromTreeUri(this, treeUri)
+                    }
+                } catch (_: Exception) { }
             }
+
+            // ---- 先删除伴生文件，再删除音频 ----
+            if (companions.isNotEmpty()) {
+                // Try 1: 通过预先获取的 parentDir 直接删除同目录伴生文件
+                try {
+                    val children = parentDir?.listFiles()
+                    if (children != null) {
+                        for (child in children) {
+                            if (child.isFile && child.name in companions) {
+                                Log.d("ACR", "deleteRecording: 删除伴生文件(parent) ${child.name}")
+                                child.delete()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("ACR", "deleteRecording: parentFile 清理失败", e)
+                }
+
+                // Try 2: 通过 tree URI 递归搜索删除（处理子目录中的伴生文件）
+                try {
+                    if (treeDir?.exists() == true) {
+                        deleteCompanionsInTree(treeDir, companions.toSet())
+                    }
+                } catch (e: Exception) {
+                    Log.w("ACR", "deleteRecording: tree 清理失败", e)
+                }
+
+                // Try 3: 默认目录（录音可能尚未移动到用户目录）
+                try {
+                    val defaultDir = prefs.defaultOutputDir
+                    if (defaultDir.isDirectory) {
+                        for (c in companions) {
+                            val f = java.io.File(defaultDir, c)
+                            if (f.isFile && f.delete()) {
+                                Log.d("ACR", "deleteRecording: 删除伴生文件(default) $c")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w("ACR", "deleteRecording: default dir 清理失败", e)
+                }
+
+                // Try 4: file:// URI — 直接构造路径
+                if (uriStr.startsWith("file://")) {
+                    try {
+                        val dir = java.io.File(uriStr).parentFile
+                        if (dir != null && dir.isDirectory) {
+                            for (c in companions) {
+                                val f = java.io.File(dir, c)
+                                if (f.isFile && f.delete()) {
+                                    Log.d("ACR", "deleteRecording: 删除伴生文件(file) $c")
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w("ACR", "deleteRecording: file:// 清理失败", e)
+                    }
+                }
+            }
+
+            // 最后删除音频文件本身
+            val deleted = docFile?.delete() ?: false
+            Log.d("ACR", "deleteRecording: audio=$name deleted=$deleted uri=$uriStr")
             result.success(deleted)
         } catch (e: Exception) {
+            Log.e("ACR", "deleteRecording error", e)
             result.error("DELETE_ERROR", e.message, null)
+        }
+    }
+
+    /** Recursively search a SAF tree and delete companion files by name. */
+    private fun deleteCompanionsInTree(dir: DocumentFile, names: Set<String>) {
+        for (child in dir.listFiles()) {
+            if (child.isFile && child.name in names) {
+                Log.d("ACR", "deleteRecording: 删除伴生文件(tree) ${child.name}")
+                child.delete()
+            }
+            if (child.isDirectory) {
+                deleteCompanionsInTree(child, names)
+            }
         }
     }
 
